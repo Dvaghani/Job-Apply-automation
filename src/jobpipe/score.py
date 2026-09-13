@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import logging
 
-import anthropic
 from pydantic import BaseModel, Field
 
-from . import db
+from . import db, llm
 from .config import Config
+from .llm import LLMError
 
 log = logging.getLogger(__name__)
 
@@ -90,15 +90,8 @@ def build_prompt(row, profile: str) -> str:
     )
 
 
-def score_one(client: anthropic.Anthropic, model: str, row, profile: str) -> FitScore:
-    response = client.messages.parse(
-        model=model,
-        max_tokens=2000,
-        system=SYSTEM,
-        messages=[{"role": "user", "content": build_prompt(row, profile)}],
-        output_format=FitScore,
-    )
-    return response.parsed_output
+def score_one(backend, row, profile: str) -> FitScore:
+    return backend.complete(SYSTEM, build_prompt(row, profile), FitScore, max_tokens=2000)
 
 
 def run(config: Config, conn, limit: int | None = None) -> dict:
@@ -108,13 +101,14 @@ def run(config: Config, conn, limit: int | None = None) -> dict:
     if not pending:
         return {"scored": 0, "failed": 0, "total": 0}
 
-    client = anthropic.Anthropic()
+    backend = llm.build(config)
+    log.info("scoring %d job(s) via %s", len(pending), backend.name)
     scored = failed = 0
 
     for row in pending:
         try:
-            result = score_one(client, config.model, row, profile)
-        except anthropic.APIError as exc:
+            result = score_one(backend, row, profile)
+        except LLMError as exc:
             # Leave the row unscored so the next run retries it.
             log.error("scoring failed for %s @ %s: %s", row["title"], row["company"], exc)
             failed += 1

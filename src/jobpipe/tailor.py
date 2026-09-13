@@ -11,9 +11,10 @@ import logging
 import re
 from pathlib import Path
 
-import anthropic
 from pydantic import BaseModel, Field
 
+from . import llm
+from .llm import LLMError
 from .resume import Resume, render_html, render_markdown
 from .verify import check_tailoring
 
@@ -136,21 +137,10 @@ def build_prompt(resume: Resume, row, cover_letter: bool) -> str:
     )
 
 
-def tailor_one(
-    client: anthropic.Anthropic,
-    model: str,
-    resume: Resume,
-    row,
-    cover_letter: bool = True,
-) -> Tailoring:
-    response = client.messages.parse(
-        model=model,
-        max_tokens=8000,
-        system=SYSTEM,
-        messages=[{"role": "user", "content": build_prompt(resume, row, cover_letter)}],
-        output_format=Tailoring,
+def tailor_one(backend, resume: Resume, row, cover_letter: bool = True) -> Tailoring:
+    return backend.complete(
+        SYSTEM, build_prompt(resume, row, cover_letter), Tailoring, max_tokens=8000
     )
-    return response.parsed_output
 
 
 def slugify(text: str) -> str:
@@ -220,7 +210,8 @@ def run(config, conn, fingerprints: list[str], cover_letter: bool = True) -> dic
     from .resume import load as load_resume
 
     resume = load_resume(config.resume_path)
-    client = anthropic.Anthropic()
+    backend = llm.build(config)
+    log.info("tailoring %d job(s) via %s", len(fingerprints), backend.name)
     tailored = failed = flagged = 0
 
     for fingerprint in fingerprints:
@@ -231,8 +222,8 @@ def run(config, conn, fingerprints: list[str], cover_letter: bool = True) -> dic
             continue
 
         try:
-            result = tailor_one(client, config.model, resume, row, cover_letter)
-        except anthropic.APIError as exc:
+            result = tailor_one(backend, resume, row, cover_letter)
+        except LLMError as exc:
             log.error("tailoring failed for %s @ %s: %s", row["title"], row["company"], exc)
             failed += 1
             continue

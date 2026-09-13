@@ -41,6 +41,12 @@ HONEST = Tailoring(
     gaps=["No Kubernetes administration"],
 )
 
+class _FakeBackend:
+    """Stands in for a model backend; tailor_one is stubbed separately."""
+
+    name = "fake"
+
+
 FABRICATED = Tailoring(
     summary="Backend engineer.",
     roles=[TailoredRole(role_index=0, bullets=[
@@ -78,7 +84,7 @@ def setup(tmp_path):
 def test_honest_tailoring_writes_clean_output(setup, monkeypatch):
     config, conn, fp = setup
     monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
-    monkeypatch.setattr(tailor.anthropic, "Anthropic", lambda *a, **k: object())
+    monkeypatch.setattr(tailor.llm, "build", lambda cfg: _FakeBackend())
 
     result = tailor.run(config, conn, [fp])
     assert result == {"tailored": 1, "failed": 0, "flagged": 0}
@@ -98,7 +104,7 @@ def test_honest_tailoring_writes_clean_output(setup, monkeypatch):
 def test_fabricated_tailoring_is_flagged_not_silently_written(setup, monkeypatch):
     config, conn, fp = setup
     monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: FABRICATED)
-    monkeypatch.setattr(tailor.anthropic, "Anthropic", lambda *a, **k: object())
+    monkeypatch.setattr(tailor.llm, "build", lambda cfg: _FakeBackend())
 
     result = tailor.run(config, conn, [fp])
     assert result["flagged"] == 1
@@ -113,21 +119,21 @@ def test_fabricated_tailoring_is_flagged_not_silently_written(setup, monkeypatch
 def test_tailored_job_leaves_the_work_queue(setup, monkeypatch):
     config, conn, fp = setup
     monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
-    monkeypatch.setattr(tailor.anthropic, "Anthropic", lambda *a, **k: object())
+    monkeypatch.setattr(tailor.llm, "build", lambda cfg: _FakeBackend())
     assert len(db.untailored_approved(conn)) == 1
     tailor.run(config, conn, [fp])
     assert db.untailored_approved(conn) == []
 
 
 def test_api_failure_leaves_the_job_retryable(setup, monkeypatch):
-    import anthropic as sdk
+    from jobpipe.llm import LLMError
     config, conn, fp = setup
 
     def boom(*a, **k):
-        raise sdk.APIError("down", request=None, body=None)
+        raise LLMError("backend unavailable")
 
     monkeypatch.setattr(tailor, "tailor_one", boom)
-    monkeypatch.setattr(tailor.anthropic, "Anthropic", lambda *a, **k: object())
+    monkeypatch.setattr(tailor.llm, "build", lambda cfg: _FakeBackend())
 
     result = tailor.run(config, conn, [fp])
     assert result == {"tailored": 0, "failed": 1, "flagged": 0}
@@ -140,7 +146,7 @@ def test_cover_letter_naming_the_employer_is_not_flagged(setup, monkeypatch):
     description never repeats it."""
     config, conn, fp = setup
     monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
-    monkeypatch.setattr(tailor.anthropic, "Anthropic", lambda *a, **k: object())
+    monkeypatch.setattr(tailor.llm, "build", lambda cfg: _FakeBackend())
     # The seeded description mentions Python and Postgres but not "Globex".
     assert "Globex" not in db.get(conn, fp)["description"]
     assert tailor.run(config, conn, [fp])["flagged"] == 0
@@ -150,7 +156,7 @@ def test_review_queue_shows_tailored_state(setup, monkeypatch):
     from jobpipe.web import create_app
     config, conn, fp = setup
     monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
-    monkeypatch.setattr(tailor.anthropic, "Anthropic", lambda *a, **k: object())
+    monkeypatch.setattr(tailor.llm, "build", lambda cfg: _FakeBackend())
 
     client = create_app(config).test_client()
     before = client.get("/?status=approved").get_data(as_text=True)

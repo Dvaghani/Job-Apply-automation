@@ -37,10 +37,24 @@ cp config.example.yaml config.yaml     # your watchlist and filters
 cp profile.example.md  profile.md      # your background, for scoring
 cp resume.example.json resume.json     # your master resume, for tailoring
 cp applicant.example.yaml applicant.yaml   # your details, for filling forms
-export ANTHROPIC_API_KEY=sk-ant-...    # or run `ant auth login`
 
 pip install -e ".[browser]" && playwright install chromium   # for `apply`
 ```
+
+**Then pick a model backend** — this decides how scoring and tailoring reach
+Claude, and they bill differently:
+
+| `backend:` | Needs | Use when |
+|---|---|---|
+| `claude-cli` | Claude Code installed and signed in | You have **Claude Pro or Max**. Runs on the subscription. |
+| `api` | `ANTHROPIC_API_KEY` + API credits | You have API billing set up. |
+
+A Claude Pro subscription does **not** include API access — those are
+separate products, billed separately. If Pro is what you have, use
+`backend: claude-cli`; it shells out to `claude -p` in headless mode and
+needs no key at all. It's slower (a fresh process per call, roughly 8
+seconds a job) and it consumes your Pro usage allowance, so watch the
+volume on a large watchlist.
 
 `config.yaml`, `profile.md`, `resume.json`, `applicant.yaml` and
 `applications/` are all gitignored — they're personal.
@@ -68,12 +82,21 @@ looks right, and run `jobpipe tailor`.
 
 ## How it works
 
-**Ingest.** Public ATS endpoints only — Greenhouse, Lever and Ashby all
-publish free, unauthenticated JSON job feeds, one company per call. Build a
-watchlist of board slugs and you get clean structured data with no scraping,
-no bot detection, and no terms-of-service problem. Adzuna is available as a
-broader aggregator (free tier: 1,000 calls/month) for companies not yet on
-your list.
+**Ingest.** Public ATS endpoints only — Greenhouse, Lever, Ashby and
+SmartRecruiters all publish free, unauthenticated JSON job feeds, one company
+per call. Build a watchlist of board slugs and you get clean structured data
+with no scraping, no bot detection, and no terms-of-service problem. Adzuna is
+available as a broader aggregator (free tier: 1,000 calls/month) for companies
+not yet on your list.
+
+**A coverage caveat worth knowing before you build a watchlist.** The free ATS
+feeds are heavily US-tech-weighted. Greenhouse, Lever and Ashby returned
+nothing at all for a sample of German automotive employers (Bosch, Continental,
+ZF, Vector, dSPACE, Elektrobit, IAV, Porsche, CARIAD); SmartRecruiters has the
+best European reach of the four but is still thin. Employers in those markets
+mostly run SAP SuccessFactors, Workday, Softgarden or their own portals, none
+of which publish an open feed. If you're job-hunting outside US tech, **Adzuna
+with the right `country` is your primary source**, not the watchlist.
 
 **Dedup.** Jobs are keyed by a fingerprint of (company, title), normalized —
 legal suffixes dropped, trailing `(Bengaluru, India)` / `- Remote` / `[L5]`
@@ -199,9 +222,10 @@ to skip that check.
 
 ```yaml
 sources:
-  greenhouse: [stripe, figma]      # token from boards.greenhouse.io/<token>
-  lever:      [leverdemo]          # slug from jobs.lever.co/<slug>
-  ashby:      [linear, ramp]       # slug from jobs.ashbyhq.com/<slug>
+  greenhouse:      [stripe, figma]   # token from boards.greenhouse.io/<token>
+  lever:           [leverdemo]      # slug from jobs.lever.co/<slug>
+  ashby:           [linear, ramp]   # slug from jobs.ashbyhq.com/<slug>
+  smartrecruiters: [ContinentalAG]  # slug from careers.smartrecruiters.com/<slug>
 
 filters:
   remote_only: true
@@ -211,14 +235,16 @@ filters:
   title_exclude: [intern, director]
   title_include: [engineer, developer]
 
-model: claude-opus-5               # scoring model
+backend: claude-cli                # or `api`
+cli_model: sonnet                  # CLI aliases: opus / sonnet / haiku
 min_score: 60                      # below this never reaches the queue
 ```
 
-Scoring defaults to `claude-opus-5` because score quality is the whole value
-of this stage — a bad score costs you a real application slot. If you're
-scoring hundreds a day and want to cut cost, set `model: claude-sonnet-5` or
-`claude-haiku-4-5`.
+Scoring defaults to `claude-opus-5` on the `api` backend because score
+quality is the whole value of this stage — a bad score costs you a real
+application slot. To cut cost at volume, set `model: claude-sonnet-5` or
+`claude-haiku-4-5`. On `claude-cli` the model is `cli_model`, which takes
+the CLI's aliases (`opus`, `sonnet`, `haiku`) rather than full model ids.
 
 `profile.md` — your background in plain prose. The scorer sees only this, so
 specifics beat adjectives, and an honest **Gaps** section makes scores far
@@ -238,7 +264,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-145 tests, no network. Source parsers run against recorded payload shapes,
+165 tests, no network. Source parsers run against recorded payload shapes,
 the tailoring pipeline runs end to end with the model call stubbed, and
 autofill is driven by a real headless Chromium against a synthetic ATS form
 covering every label shape. The job-board adapters have separately been

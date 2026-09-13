@@ -16,6 +16,12 @@ DEFAULT_PROFILE_PATH = Path("profile.md")
 # config.yaml with claude-sonnet-5 or claude-haiku-4-5 to cut cost.
 DEFAULT_MODEL = "claude-opus-5"
 
+# Backend default. "claude-cli" runs on a Claude Pro/Max subscription via the
+# Claude Code CLI; "api" needs ANTHROPIC_API_KEY and separate API credits.
+DEFAULT_BACKEND = "api"
+# The CLI takes aliases (opus/sonnet/haiku) rather than full model ids.
+DEFAULT_CLI_MODEL = "sonnet"
+
 
 class ConfigError(RuntimeError):
     pass
@@ -41,6 +47,9 @@ class Config:
     sources: dict = field(default_factory=dict)
     filters: Filters = field(default_factory=Filters)
     model: str = DEFAULT_MODEL
+    backend: str = DEFAULT_BACKEND
+    cli_model: str = DEFAULT_CLI_MODEL
+    cli_timeout: int = 300
     min_score: int = 60
     db_path: str = "jobs.db"
     profile_path: str = str(DEFAULT_PROFILE_PATH)
@@ -59,6 +68,10 @@ class Config:
     @property
     def ashby_orgs(self) -> list[str]:
         return list(self.sources.get("ashby", []) or [])
+
+    @property
+    def smartrecruiters_companies(self) -> list[str]:
+        return list(self.sources.get("smartrecruiters", []) or [])
 
     @property
     def adzuna(self) -> dict:
@@ -113,6 +126,9 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         sources=data.get("sources") or {},
         filters=filters,
         model=data.get("model") or DEFAULT_MODEL,
+        backend=(data.get("backend") or DEFAULT_BACKEND).lower(),
+        cli_model=data.get("cli_model") or DEFAULT_CLI_MODEL,
+        cli_timeout=int(data.get("cli_timeout", 300)),
         min_score=int(data.get("min_score", 60)),
         db_path=data.get("db_path") or "jobs.db",
         profile_path=data.get("profile_path") or str(DEFAULT_PROFILE_PATH),

@@ -1,5 +1,13 @@
 # Copy to config.yaml and edit. config.yaml is gitignored — it's yours.
 
+# How scoring and tailoring reach Claude.
+#   claude-cli  runs on a Claude Pro/Max subscription via the Claude Code CLI
+#   api         needs ANTHROPIC_API_KEY and separate API credits
+# Claude Pro does NOT include API access — if Pro is what you have, use claude-cli.
+backend: claude-cli
+cli_model: sonnet        # CLI aliases: opus / sonnet / haiku
+cli_timeout: 300
+
 sources:
   # Greenhouse board tokens. Find one in a company's board URL:
   #   https://boards.greenhouse.io/<token>  ->  the token
@@ -16,6 +24,11 @@ sources:
   ashby:
     - linear
     - ramp
+
+  # SmartRecruiters company slugs, from careers.smartrecruiters.com/<slug>.
+  # Best European coverage of the free ATS feeds.
+  smartrecruiters:
+    - ContinentalAG
 
   # Optional broad aggregator. Free key: https://developer.adzuna.com/
   # Leave the whole block out if you only want the watchlist above.

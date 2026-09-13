@@ -9,7 +9,7 @@ from . import db
 from .config import Config
 from .filters import check
 from .models import Job
-from .sources import adzuna, ashby, greenhouse, lever
+from .sources import adzuna, ashby, greenhouse, lever, smartrecruiters
 from .sources.base import SourceError
 
 log = logging.getLogger(__name__)
@@ -60,6 +60,14 @@ def collect(config: Config, report: IngestReport) -> list[Job]:
             jobs.extend(found)
         except SourceError as exc:
             report.errors.append(f"ashby/{org}: {exc}")
+
+    for company in config.smartrecruiters_companies:
+        try:
+            found = smartrecruiters.fetch(company, with_descriptions=True)
+            log.info("smartrecruiters/%s: %d jobs", company, len(found))
+            jobs.extend(found)
+        except SourceError as exc:
+            report.errors.append(f"smartrecruiters/{company}: {exc}")
 
     az = config.adzuna
     for query in az.get("queries", []) or []:
