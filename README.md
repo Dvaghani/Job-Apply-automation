@@ -70,7 +70,15 @@ jobpipe tailor     # tailor your resume to everything you approved
 jobpipe apply      # list approved jobs and their fingerprints
 jobpipe apply <fingerprint>   # open the form, fill it — you submit
 jobpipe stats      # counts by status
+jobpipe doctor     # check config, files, backend and sources
 ```
+
+If `ingest` returns less than you expect, run **`jobpipe doctor`** first. A
+misconfigured source produces no jobs *and* no error, which looks exactly like
+"nothing new today" — doctor makes the difference visible, including the
+common YAML slip of putting `adzuna:` at the top level instead of under
+`sources:`. Add `--probe` to make one real Adzuna call and prove the
+credentials work.
 
 A daily cron is the intended shape:
 

@@ -7,7 +7,7 @@ import logging
 import sys
 
 from . import applicant as applicant_mod
-from . import autofill, db, ingest, score, tailor, web
+from . import autofill, db, doctor, ingest, score, tailor, web
 from .config import ConfigError, load_config
 from .applicant import ApplicantError
 from .llm import LLMError
@@ -136,6 +136,10 @@ def cmd_review(config, args) -> int:
     return 0
 
 
+def cmd_doctor(config, args) -> int:
+    return 1 if doctor.run(config, probe=args.probe) else 0
+
+
 def cmd_stats(config, args) -> int:
     conn = db.connect(config.db_path)
     counts = db.stats(conn)
@@ -208,6 +212,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_review.add_argument("--host", default="127.0.0.1")
     p_review.add_argument("--port", type=int, default=5000)
 
+    p_doctor = sub.add_parser(
+        "doctor", help="check config, files, backend and sources"
+    )
+    p_doctor.add_argument(
+        "--probe", action="store_true",
+        help="also make one real Adzuna call to verify the credentials",
+    )
+
     sub.add_parser("stats", help="show counts by status")
     return parser
 
@@ -220,6 +232,7 @@ COMMANDS = {
     "run": cmd_run,
     "review": cmd_review,
     "stats": cmd_stats,
+    "doctor": cmd_doctor,
 }
 
 

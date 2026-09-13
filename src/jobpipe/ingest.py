@@ -70,6 +70,12 @@ def collect(config: Config, report: IngestReport) -> list[Job]:
             report.errors.append(f"smartrecruiters/{company}: {exc}")
 
     az = config.adzuna
+    if az and not (az.get("queries") or []):
+        # Credentials without queries fetches nothing and raises nothing —
+        # the failure mode that looks exactly like "no new jobs".
+        report.errors.append(
+            "adzuna: configured but `queries:` is empty — nothing was fetched"
+        )
     for query in az.get("queries", []) or []:
         try:
             found = adzuna.fetch(
@@ -90,6 +96,11 @@ def collect(config: Config, report: IngestReport) -> list[Job]:
 
 def run(config: Config, conn) -> IngestReport:
     report = IngestReport()
+    if not any([config.greenhouse_boards, config.lever_sites, config.ashby_orgs,
+                config.smartrecruiters_companies, config.adzuna]):
+        report.errors.append(
+            "no sources configured — run `jobpipe doctor` to see what's missing"
+        )
     jobs = collect(config, report)
     report.fetched = len(jobs)
 

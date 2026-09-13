@@ -56,3 +56,21 @@ def test_source_errors_are_collected_not_raised(monkeypatch, tmp_path):
     monkeypatch.setattr(ingest, "collect", boom)
     report = ingest.run(config, db.connect(config.db_path))
     assert report.errors and report.inserted == 1
+
+
+def test_empty_adzuna_queries_are_reported_not_silent(monkeypatch, tmp_path):
+    """Credentials with no queries fetches nothing and raised nothing — it
+    looked identical to 'no new jobs'."""
+    config = Config(
+        sources={"adzuna": {"app_id": "a", "app_key": "b", "queries": []}},
+        db_path=str(tmp_path / "t.db"),
+    )
+    conn = db.connect(config.db_path)
+    report = ingest.run(config, conn)
+    assert any("queries" in e for e in report.errors)
+
+
+def test_no_sources_configured_is_reported(tmp_path):
+    config = Config(db_path=str(tmp_path / "t.db"))
+    report = ingest.run(config, db.connect(config.db_path))
+    assert any("no sources configured" in e for e in report.errors)

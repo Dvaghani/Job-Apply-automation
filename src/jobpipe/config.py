@@ -56,6 +56,7 @@ class Config:
     resume_path: str = "resume.json"
     applicant_path: str = "applicant.yaml"
     output_dir: str = "applications"
+    raw: dict = field(default_factory=dict)
 
     @property
     def greenhouse_boards(self) -> list[str]:
@@ -135,4 +136,5 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         resume_path=data.get("resume_path") or "resume.json",
         applicant_path=data.get("applicant_path") or "applicant.yaml",
         output_dir=data.get("output_dir") or "applications",
+        raw=data,
     )
