@@ -1,0 +1,4 @@
+anthropic>=1.0
+requests>=2.31
+PyYAML>=6.0
+Flask>=3.0

@@ -1,0 +1,55 @@
+# Copy to config.yaml and edit. config.yaml is gitignored — it's yours.
+
+sources:
+  # Greenhouse board tokens. Find one in a company's board URL:
+  #   https://boards.greenhouse.io/<token>  ->  the token
+  # Or https://job-boards.greenhouse.io/<token>
+  greenhouse:
+    - stripe
+    - figma
+
+  # Lever site slugs, from https://jobs.lever.co/<slug>
+  lever:
+    - leverdemo   # replace with real slugs — companies move ATS often
+
+  # Ashby org slugs, from https://jobs.ashbyhq.com/<slug>
+  ashby:
+    - linear
+    - ramp
+
+  # Optional broad aggregator. Free key: https://developer.adzuna.com/
+  # Leave the whole block out if you only want the watchlist above.
+  # adzuna:
+  #   app_id: your_app_id       # or set ADZUNA_APP_ID
+  #   app_key: your_app_key     # or set ADZUNA_APP_KEY
+  #   country: us
+  #   where: "San Francisco"
+  #   max_pages: 1
+  #   queries:
+  #     - "backend engineer python"
+  #     - "platform engineer"
+
+# Deterministic rules applied before any LLM call. Each one is optional;
+# omit a key to skip that check. These are free — use them aggressively.
+filters:
+  # remote_only: true
+  # locations: ["san francisco", "new york", "remote"]
+  # min_salary: 150000        # only checked when the posting states a salary
+  # max_age_days: 30
+  title_exclude:
+    - intern
+    - internship
+    - "vice president"
+    - director
+  # title_include: ["engineer", "developer"]
+
+# Claude model used for scoring. Opus gives the best calibration; switch to
+# claude-sonnet-5 or claude-haiku-4-5 if you're scoring hundreds a day and
+# want to cut cost.
+model: claude-opus-5
+
+# Jobs scoring below this never appear in the review queue.
+min_score: 60
+
+db_path: jobs.db
+profile_path: profile.md

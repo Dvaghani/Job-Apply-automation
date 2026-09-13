@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Local config and personal data — never commit these
+config.yaml
+profile.md
+*.db
+*.sqlite3
+.env
