@@ -54,6 +54,8 @@ class Config:
     db_path: str = "jobs.db"
     profile_path: str = str(DEFAULT_PROFILE_PATH)
     resume_path: str = "resume.json"
+    language: str = "en"
+    resume_paths: dict = field(default_factory=dict)
     applicant_path: str = "applicant.yaml"
     output_dir: str = "applications"
     raw: dict = field(default_factory=dict)
@@ -78,6 +80,37 @@ class Config:
     @property
     def adzuna(self) -> dict:
         return dict(self.sources.get("adzuna", {}) or {})
+
+    def resume_for(self, language: str = "en") -> str:
+        """The master resume to tailor from, for one output language.
+
+        A German application wants German source material: the sections
+        copied verbatim from the master (projects, thesis, languages) are not
+        translated by the model, so tailoring a German resume from the
+        English master produces a half-English document. Falling back
+        silently would hide that, so a missing master is an error that says
+        what to do about it.
+        """
+        if not language or language == "en":
+            return self.resume_path
+
+        explicit = (self.resume_paths or {}).get(language)
+        if explicit:
+            return explicit
+
+        # Convention: resume.json -> resume.de.json, alongside it.
+        base = Path(self.resume_path)
+        guess = base.parent / f"{base.stem}.{language}{base.suffix}"
+        if guess.exists():
+            return str(guess)
+
+        raise ConfigError(
+            f"No {language} master resume. Tailoring in {language} needs one, "
+            f"because the sections copied verbatim from the master are not "
+            f"translated. Create {guess}, or point at it in config.yaml:\n"
+            f"  resume_paths:\n"
+            f"    {language}: path/to/your-resume.{language}.json"
+        )
 
     def load_profile(self) -> str:
         path = Path(self.profile_path)
@@ -135,6 +168,8 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         db_path=data.get("db_path") or "jobs.db",
         profile_path=data.get("profile_path") or str(DEFAULT_PROFILE_PATH),
         resume_path=data.get("resume_path") or "resume.json",
+        language=(data.get("language") or "en").lower(),
+        resume_paths=data.get("resume_paths") or {},
         applicant_path=data.get("applicant_path") or "applicant.yaml",
         output_dir=data.get("output_dir") or "applications",
         raw=data,

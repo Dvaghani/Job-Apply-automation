@@ -65,7 +65,7 @@ Location: {location}
 {description}
 </posting>
 
-Tailor the resume to this posting.{cover}"""
+Tailor the resume to this posting.{cover}{language}"""
 
 
 class TailoredBullet(BaseModel):
@@ -122,7 +122,21 @@ def _resume_for_prompt(resume: Resume) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(resume: Resume, row, cover_letter: bool) -> str:
+LANGUAGE_INSTRUCTION = {
+    "de": (
+        "\n\nWrite every piece of output — summary, bullets and cover letter — "
+        "in German, in the register a German Lebenslauf and Anschreiben use. "
+        "The master resume below is already German: keep its terminology, and "
+        "keep established English technical terms (HiL, ECU-TEST, CAN, MQTT) "
+        "as they are, because that is how German automotive engineers write "
+        "them. Do not translate proper nouns or tool names."
+    ),
+}
+
+
+def build_prompt(
+    resume: Resume, row, cover_letter: bool, language: str = "en"
+) -> str:
     description = (row["description"] or "").strip()
     if len(description) > MAX_DESCRIPTION_CHARS:
         description = description[:MAX_DESCRIPTION_CHARS] + "\n[truncated]"
@@ -134,12 +148,16 @@ def build_prompt(resume: Resume, row, cover_letter: bool) -> str:
         description=description or "(no description provided)",
         cover=" Also write the cover letter." if cover_letter else
               " Leave cover_letter empty.",
+        language=LANGUAGE_INSTRUCTION.get(language, ""),
     )
 
 
-def tailor_one(backend, resume: Resume, row, cover_letter: bool = True) -> Tailoring:
+def tailor_one(
+    backend, resume: Resume, row, cover_letter: bool = True, language: str = "en"
+) -> Tailoring:
     return backend.complete(
-        SYSTEM, build_prompt(resume, row, cover_letter), Tailoring, max_tokens=8000
+        SYSTEM, build_prompt(resume, row, cover_letter, language),
+        Tailoring, max_tokens=8000,
     )
 
 
@@ -152,29 +170,62 @@ def output_dir(base: str | Path, row) -> Path:
     return Path(base) / f"{slugify(row['company'])}-{slugify(row['title'])}"
 
 
+def suffix_for(language: str) -> str:
+    """File-name suffix for a language. English keeps the plain names.
+
+    So a job tailored in both languages keeps both sets side by side —
+    `resume.md` and `resume.de.md` — rather than the second run silently
+    overwriting the first.
+    """
+    return "" if not language or language == "en" else f".{language}"
+
+
+def write_pdf(html_path: Path, pdf_path: Path) -> Path | None:
+    """Render the resume to PDF now, rather than when a form asks for one.
+
+    Application forms want a PDF, and so does anyone uploading by hand after
+    the autofill misses. Rendering it at tailor time means the folder is
+    always ready to use. It needs a browser, so a missing Playwright is a
+    warning and not a failed tailoring run.
+    """
+    from .autofill import html_to_pdf
+
+    try:
+        return html_to_pdf(html_path, pdf_path)
+    except Exception as exc:
+        log.warning("could not render %s: %s", pdf_path.name, str(exc)[:100])
+        return None
+
+
 def write_outputs(
     directory: Path,
     resume: Resume,
     tailoring: Tailoring,
     row,
     findings: list,
+    language: str = "en",
 ) -> list[Path]:
     """Write the tailored artifacts. Returns the paths written."""
     directory.mkdir(parents=True, exist_ok=True)
     written = []
+    sfx = suffix_for(language)
 
-    resume_md = directory / "resume.md"
-    resume_md.write_text(render_markdown(resume, tailoring), encoding="utf-8")
+    resume_md = directory / f"resume{sfx}.md"
+    resume_md.write_text(render_markdown(resume, tailoring, language), encoding="utf-8")
     written.append(resume_md)
 
-    resume_html = directory / "resume.html"
+    resume_html = directory / f"resume{sfx}.html"
     resume_html.write_text(
-        render_html(resume, tailoring, row["title"]), encoding="utf-8"
+        render_html(resume, tailoring, row["title"], language), encoding="utf-8"
     )
     written.append(resume_html)
 
+    pdf = write_pdf(resume_html, directory / f"resume{sfx}.pdf")
+    if pdf is not None:
+        written.append(pdf)
+
     if tailoring.cover_letter.strip():
-        cover = directory / "cover-letter.md"
+        cover = directory / f"cover-letter{sfx}.md"
         cover.write_text(tailoring.cover_letter.strip() + "\n", encoding="utf-8")
         written.append(cover)
 
@@ -197,21 +248,44 @@ def write_outputs(
         notes += [f"- {f}" for f in findings]
     else:
         notes += ["Every claim traces back to the master resume. No fabrication found."]
-    notes_path = directory / "NOTES.md"
+
+    if language != "en":
+        notes += [
+            "",
+            f"**Read the {language} text yourself.** Verification is weaker "
+            "outside English: German capitalises every noun, so a capital "
+            "letter no longer marks a proper noun and only distinctively "
+            "shaped names (AWS, ECU-TEST, PostgreSQL) can be checked against "
+            "your master. An invented technology whose name looks like an "
+            "ordinary noun would not be caught here. Numbers are still "
+            "checked exactly as in English.",
+        ]
+    notes_path = directory / f"NOTES{sfx}.md"
     notes_path.write_text("\n".join(notes) + "\n", encoding="utf-8")
     written.append(notes_path)
 
     return written
 
 
-def run(config, conn, fingerprints: list[str], cover_letter: bool = True) -> dict:
+def run(
+    config,
+    conn,
+    fingerprints: list[str],
+    cover_letter: bool = True,
+    language: str | None = None,
+) -> dict:
     """Tailor for each given job. Returns a summary dict."""
     from . import db
     from .resume import load as load_resume
 
-    resume = load_resume(config.resume_path)
+    language = (language or config.language or "en").lower()
+    # Raises if there is no master in this language — better than quietly
+    # producing a half-translated document.
+    resume = load_resume(config.resume_for(language))
     backend = llm.build(config)
-    log.info("tailoring %d job(s) via %s", len(fingerprints), backend.name)
+    log.info(
+        "tailoring %d job(s) in %s via %s", len(fingerprints), language, backend.name
+    )
     tailored = failed = flagged = 0
 
     for fingerprint in fingerprints:
@@ -222,7 +296,7 @@ def run(config, conn, fingerprints: list[str], cover_letter: bool = True) -> dic
             continue
 
         try:
-            result = tailor_one(backend, resume, row, cover_letter)
+            result = tailor_one(backend, resume, row, cover_letter, language)
         except LLMError as exc:
             log.error("tailoring failed for %s @ %s: %s", row["title"], row["company"], exc)
             failed += 1
@@ -233,9 +307,9 @@ def run(config, conn, fingerprints: list[str], cover_letter: bool = True) -> dic
         job_text = " ".join(
             filter(None, [row["company"], row["title"], row["description"]])
         )
-        findings = check_tailoring(resume, result, job_text)
+        findings = check_tailoring(resume, result, job_text, language)
         directory = output_dir(config.output_dir, row)
-        write_outputs(directory, resume, result, row, findings)
+        write_outputs(directory, resume, result, row, findings, language)
         db.mark_tailored(conn, fingerprint, str(directory))
         conn.commit()
 
@@ -243,8 +317,9 @@ def run(config, conn, fingerprints: list[str], cover_letter: bool = True) -> dic
         if findings:
             flagged += 1
             log.warning(
-                "%s @ %s: %d unverified claim(s) — see %s/NOTES.md",
+                "%s @ %s: %d unverified claim(s) — see %s/NOTES%s.md",
                 row["title"], row["company"], len(findings), directory,
+                suffix_for(language),
             )
             for finding in findings:
                 log.warning("    %s", finding)

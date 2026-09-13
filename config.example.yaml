@@ -64,6 +64,13 @@ filters:
 model: claude-opus-5
 
 # Jobs scoring below this never appear in the review queue.
+# Output language for tailoring: en | de.
+# German needs a German master resume. By convention that is resume.de.json
+# next to resume.json, or point at it explicitly:
+#   resume_paths:
+#     de: resume.de.json
+language: en
+
 min_score: 60
 
 db_path: jobs.db

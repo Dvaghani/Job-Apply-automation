@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import webbrowser
 
 from . import applicant as applicant_mod
 from . import autofill, db, doctor, ingest, score, tailor, web
@@ -35,7 +36,12 @@ def cmd_ingest(config, args) -> int:
 
 def cmd_score(config, args) -> int:
     conn = db.connect(config.db_path)
-    result = score.run(config, conn, limit=args.limit)
+    result = score.run(
+        config, conn,
+        limit=args.limit,
+        fingerprints=list(getattr(args, "job", []) or []),
+        rescore=getattr(args, "rescore", False),
+    )
     print(f"scored {result['scored']} of {result['total']}, {result['failed']} failed")
     return 1 if result["failed"] and not result["scored"] else 0
 
@@ -55,7 +61,11 @@ def cmd_tailor(config, args) -> int:
         print("nothing to tailor — approve some jobs in the review queue first")
         return 0
 
-    result = tailor.run(config, conn, fingerprints, cover_letter=not args.no_cover_letter)
+    result = tailor.run(
+        config, conn, fingerprints,
+        cover_letter=not args.no_cover_letter,
+        language=args.language,
+    )
     print(
         f"tailored {result['tailored']}, {result['flagged']} with unverified claims, "
         f"{result['failed']} failed"
@@ -115,12 +125,14 @@ def cmd_apply(config, args) -> int:
     if not row["output_dir"]:
         print("  (not tailored — run `jobpipe tailor` first to attach a resume)")
 
-    actions = autofill.run(row, me, headless=args.headless, wait=not args.no_wait)
-
-    filled = sum(1 for a in actions if a.action == "filled")
-    print(f"\n{filled} of {len(actions)} fields filled:\n")
-    for action in actions:
-        print(action)
+    # run() prints the report itself: it can fill more than once, and every
+    # pass needs reporting, not just the last.
+    autofill.run(
+        row, me,
+        headless=args.headless,
+        wait=not args.no_wait,
+        language=args.language or config.language,
+    )
     print("\nNothing was submitted. Submit the form yourself in the browser.")
 
     if args.mark_applied:
@@ -130,10 +142,23 @@ def cmd_apply(config, args) -> int:
     return 0
 
 
-def cmd_review(config, args) -> int:
-    print(f"Review queue: http://{args.host}:{args.port}  (min score {config.min_score})")
+def _serve(config, args, path: str, banner: str) -> int:
+    url = f"http://{args.host}:{args.port}{path}"
+    print(f"{banner}: {url}")
+    if args.open:
+        webbrowser.open(url)
     web.serve(config, host=args.host, port=args.port)
     return 0
+
+
+def cmd_dashboard(config, args) -> int:
+    return _serve(config, args, "/", "Dashboard")
+
+
+def cmd_review(config, args) -> int:
+    return _serve(
+        config, args, "/review", f"Review queue (min score {config.min_score})"
+    )
 
 
 def cmd_doctor(config, args) -> int:
@@ -170,6 +195,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_score = sub.add_parser("score", help="score unscored postings with Claude")
     p_score.add_argument("--limit", type=int, default=None, help="max jobs to score")
+    p_score.add_argument(
+        "job", nargs="*",
+        help="job fingerprints to (re)score wherever they are, keeping their status",
+    )
+    p_score.add_argument(
+        "--rescore", action="store_true",
+        help="score every live job again (scored + approved), keeping statuses — "
+             "what you want after editing profile.md",
+    )
 
     p_run = sub.add_parser("run", help="ingest, then score")
     p_run.add_argument("--limit", type=int, default=None)
@@ -188,6 +222,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict", action="store_true",
         help="exit non-zero if any claim fails verification",
     )
+    p_tailor.add_argument(
+        "--language", default=None, choices=["en", "de"],
+        help="output language (default: `language` in config.yaml). "
+             "German needs a German master resume — see resume_paths.",
+    )
 
     p_apply = sub.add_parser(
         "apply", help="open a posting's form and fill it — never submits"
@@ -204,13 +243,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-wait", action="store_true", help="close the browser immediately"
     )
     p_apply.add_argument(
+        "--language", default=None, choices=["en", "de"],
+        help="which language's tailored resume to attach (default: config)",
+    )
+    p_apply.add_argument(
         "--mark-applied", action="store_true",
         help="mark the job applied afterwards (only do this once you have submitted)",
     )
 
-    p_review = sub.add_parser("review", help="open the local review queue")
-    p_review.add_argument("--host", default="127.0.0.1")
-    p_review.add_argument("--port", type=int, default=5000)
+    # Both serve the same app; they differ only in the page they point you at.
+    for name, help_text in [
+        ("dashboard", "run the pipeline from a local web page"),
+        ("review", "open the local review queue"),
+    ]:
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--host", default="127.0.0.1")
+        p.add_argument("--port", type=int, default=5000)
+        p.add_argument(
+            "--open", action="store_true", help="open it in your browser too"
+        )
 
     p_doctor = sub.add_parser(
         "doctor", help="check config, files, backend and sources"
@@ -230,6 +281,7 @@ COMMANDS = {
     "tailor": cmd_tailor,
     "apply": cmd_apply,
     "run": cmd_run,
+    "dashboard": cmd_dashboard,
     "review": cmd_review,
     "stats": cmd_stats,
     "doctor": cmd_doctor,

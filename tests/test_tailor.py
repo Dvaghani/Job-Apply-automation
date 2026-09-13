@@ -7,6 +7,10 @@ from jobpipe import db, tailor
 from jobpipe.resume import load
 from jobpipe.verify import Finding
 
+# Captured before the autouse stub below replaces it, so the one test that
+# exercises the real renderer still can.
+REAL_WRITE_PDF = tailor.write_pdf
+
 MASTER = {
     "basics": {"name": "Ada Lovelace", "email": "ada@example.com"},
     "work": [{
@@ -83,10 +87,92 @@ def test_long_description_is_truncated_not_dropped(master):
     assert len(prompt) < 20000
 
 
+@pytest.fixture(autouse=True)
+def fake_pdf(monkeypatch):
+    """Stand in for the PDF render.
+
+    write_outputs now produces the PDF too, so the folder is upload-ready
+    without waiting for a form to ask. That needs a real browser, which is
+    not what any test in this module is about.
+    """
+    def render(html_path, pdf_path):
+        pdf_path.write_bytes(b"%PDF-1.4 stub")
+        return pdf_path
+
+    monkeypatch.setattr(tailor, "write_pdf", render)
+
+
 def test_write_outputs_writes_expected_files(tmp_path, master):
     written = tailor.write_outputs(tmp_path / "app", master, T(cover="Hello."), row(), [])
     names = {p.name for p in written}
-    assert names == {"resume.md", "resume.html", "cover-letter.md", "NOTES.md"}
+    assert names == {
+        "resume.md", "resume.html", "resume.pdf", "cover-letter.md", "NOTES.md",
+    }
+
+
+def test_a_pdf_is_ready_without_waiting_for_a_form(tmp_path, master):
+    """Forms want a PDF, and so does anyone uploading by hand."""
+    tailor.write_outputs(tmp_path / "app", master, T(), row(), [])
+    assert (tmp_path / "app" / "resume.pdf").is_file()
+
+
+def test_a_failed_pdf_render_does_not_fail_the_tailoring(tmp_path, monkeypatch):
+    """No browser installed is a warning, not a lost tailoring run."""
+    from jobpipe import autofill
+
+    def explode(html_path, pdf_path):
+        raise RuntimeError("no browser here")
+
+    monkeypatch.setattr(autofill, "html_to_pdf", explode)
+    assert REAL_WRITE_PDF(tmp_path / "resume.html", tmp_path / "resume.pdf") is None
+
+
+def test_write_outputs_keeps_going_when_there_is_no_pdf(tmp_path, master, monkeypatch):
+    monkeypatch.setattr(tailor, "write_pdf", lambda html, pdf: None)
+    written = tailor.write_outputs(tmp_path / "app", master, T(), row(), [])
+    names = {p.name for p in written}
+    assert "resume.md" in names
+    assert "resume.pdf" not in names
+
+
+# --- German output --------------------------------------------------------
+
+def test_german_output_gets_its_own_filenames(tmp_path, master):
+    """Both languages coexist; the second run must not overwrite the first."""
+    written = tailor.write_outputs(
+        tmp_path / "app", master, T(cover="Hallo."), row(), [], language="de"
+    )
+    names = {p.name for p in written}
+    assert names == {
+        "resume.de.md", "resume.de.html", "resume.de.pdf",
+        "cover-letter.de.md", "NOTES.de.md",
+    }
+
+
+def test_both_languages_can_live_side_by_side(tmp_path, master):
+    tailor.write_outputs(tmp_path / "app", master, T(cover="Hello."), row(), [])
+    tailor.write_outputs(
+        tmp_path / "app", master, T(cover="Hallo."), row(), [], language="de"
+    )
+    present = {p.name for p in (tmp_path / "app").iterdir()}
+    assert {"resume.md", "resume.de.md"} <= present
+
+
+def test_german_prompt_asks_for_german(master):
+    prompt = tailor.build_prompt(master, row(), cover_letter=True, language="de")
+    assert "in German" in prompt
+    assert "Lebenslauf" in prompt
+
+
+def test_english_prompt_says_nothing_about_language(master):
+    prompt = tailor.build_prompt(master, row(), cover_letter=True, language="en")
+    assert "in German" not in prompt
+
+
+def test_suffix_for_language():
+    assert tailor.suffix_for("en") == ""
+    assert tailor.suffix_for("") == ""
+    assert tailor.suffix_for("de") == ".de"
 
 
 def test_no_cover_letter_file_when_empty(tmp_path, master):

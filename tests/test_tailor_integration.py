@@ -158,12 +158,12 @@ def test_review_queue_shows_tailored_state(setup, monkeypatch):
     monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
     monkeypatch.setattr(tailor.llm, "build", lambda cfg: _FakeBackend())
 
-    client = create_app(config).test_client()
-    before = client.get("/?status=approved").get_data(as_text=True)
+    client = create_app(config, token="t").test_client()
+    before = client.get("/review?status=approved").get_data(as_text=True)
     assert "Not tailored yet" in before
 
     tailor.run(config, conn, [fp])
-    after = client.get("/?status=approved").get_data(as_text=True)
+    after = client.get("/review?status=approved").get_data(as_text=True)
     assert "Tailored" in after
     assert "globex-staff-backend-engineer" in after
 
