@@ -41,6 +41,10 @@
   .flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
   .flag { font-size: 12px; padding: 2px 8px; border-radius: 4px;
           background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
+  .tailored { font-size: 13px; color: var(--good); margin: 8px 0 0; }
+  .tailored.pending { color: var(--muted); }
+  .tailored code { background: var(--bg); padding: 1px 5px; border-radius: 4px;
+                   border: 1px solid var(--line); font-size: 12px; }
   .acts { display: flex; gap: 8px; margin-top: 14px; }
   button { font: inherit; font-size: 13px; padding: 5px 14px; cursor: pointer;
            border: 1px solid var(--line); border-radius: 6px;
@@ -87,6 +91,11 @@
       </div>
 
       {% if job.score_reason %}<p class="reason">{{ job.score_reason }}</p>{% endif %}
+      {% if job.tailored_at %}
+        <p class="tailored">Tailored &rarr; <code>{{ job.output_dir }}</code></p>
+      {% elif status == 'approved' %}
+        <p class="tailored pending">Not tailored yet — run <code>jobpipe tailor</code></p>
+      {% endif %}
       {% if job.filter_reason %}<p class="reason"><em>Filtered: {{ job.filter_reason }}</em></p>{% endif %}
 
       {% set fl = job.score_flags | flags %}

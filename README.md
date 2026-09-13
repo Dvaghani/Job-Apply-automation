@@ -13,7 +13,7 @@ right roles, not clicking submit.
 
 ```
 ingest (Greenhouse/Lever/Ashby/Adzuna) → hard filters → LLM fit score
-    → review queue (you decide) → track
+    → review queue (you decide) → tailor resume + cover letter → track
 ```
 
 ## Status
@@ -21,8 +21,8 @@ ingest (Greenhouse/Lever/Ashby/Adzuna) → hard filters → LLM fit score
 | Phase | Status |
 |---|---|
 | 0 — Market research | ✅ [research/01-market-landscape.md](research/01-market-landscape.md) |
-| 1 — Ingest + filter + score + review | ✅ This code |
-| 2 — Resume/cover-letter tailoring | Not started |
+| 1 — Ingest + filter + score + review | ✅ |
+| 2 — Resume/cover-letter tailoring | ✅ |
 | 3 — Assisted autofill on submit | Not started |
 
 ## Install
@@ -34,10 +34,12 @@ pip install -e .
 
 cp config.example.yaml config.yaml     # your watchlist and filters
 cp profile.example.md  profile.md      # your background, for scoring
+cp resume.example.json resume.json     # your master resume, for tailoring
 export ANTHROPIC_API_KEY=sk-ant-...    # or run `ant auth login`
 ```
 
-Both `config.yaml` and `profile.md` are gitignored — they're personal.
+`config.yaml`, `profile.md`, `resume.json` and `applications/` are all
+gitignored — they're personal.
 
 ## Use
 
@@ -46,6 +48,7 @@ jobpipe ingest     # fetch from every configured board
 jobpipe score      # score everything unscored, with Claude
 jobpipe run        # both of the above — the daily command
 jobpipe review     # open the review queue at localhost:5000
+jobpipe tailor     # tailor your resume to everything you approved
 jobpipe stats      # counts by status
 ```
 
@@ -55,7 +58,8 @@ A daily cron is the intended shape:
 0 8 * * *  cd ~/Job-Apply-automation && .venv/bin/jobpipe run
 ```
 
-Then open `jobpipe review` when you have a spare twenty minutes.
+Then open `jobpipe review` when you have a spare twenty minutes, approve what
+looks right, and run `jobpipe tailor`.
 
 ## How it works
 
@@ -91,6 +95,44 @@ a human decision on every application, with the boring 80% already removed.
 Re-ingesting never overwrites an existing row, so a rejected job stays
 rejected and a score you already paid for is never recomputed.
 
+**Tailoring.** For each job you approved, Claude selects which of your master
+resume's bullets to use, reorders them, and rephrases each one toward the
+posting's own vocabulary. Output lands in `applications/<company>-<title>/`:
+
+```
+resume.md        tailored resume
+resume.html      same, print-to-PDF styled
+cover-letter.md  ~200 words, or omit with --no-cover-letter
+NOTES.md         matched keywords, honest gaps, and the verification result
+```
+
+**Verification — the part that matters.** An LLM rewriting your resume can
+quietly inflate a metric or add a technology you never used. That is the worst
+failure mode here: a false claim on a document you will be interviewed
+against, and you may not notice before someone else does.
+
+So nothing generated is trusted. The model must cite the index of the master
+bullet each rewrite came from, and every rewrite is checked back against it:
+
+- **Numbers.** Any figure in a rewrite must already exist in its source
+  bullet. Magnitudes are normalized first, so `2,000,000` → `2M` is
+  recognized as the same claim, while `2,000,000` → `20M` is caught.
+- **Vocabulary.** Any technology or proper noun named must appear somewhere
+  in your master resume. Capitalization alone can't tell `Kubernetes` from
+  `Built`, so position decides: mid-sentence capitals are proper nouns, and
+  a sentence's first word counts only if its shape is independently
+  distinctive (`AWS`, `PostgreSQL`, `S3`).
+- **Indices.** A cited bullet that doesn't exist is caught.
+- **Skills.** Every listed skill must be in the master.
+
+Anything unverifiable is written to `NOTES.md` under a header telling you to
+check it before sending, and logged as a warning. `--strict` exits non-zero if
+anything is flagged, so a cron can refuse to proceed silently.
+
+The model is also asked for `gaps` — what the posting wants that your resume
+genuinely can't support. That's deliberate: knowing you don't qualify is
+worth more than a document that papers over it.
+
 ## Configuration
 
 `config.yaml` — watchlist and filters. Every filter key is optional; omit one
@@ -123,6 +165,13 @@ scoring hundreds a day and want to cut cost, set `model: claude-sonnet-5` or
 specifics beat adjectives, and an honest **Gaps** section makes scores far
 better calibrated than a list of strengths alone.
 
+`resume.json` — your master resume in
+[JSON Resume](https://jsonresume.org/schema/) format. Structure matters:
+tailoring addresses individual `highlights` by index, which is what makes
+per-bullet verification possible. Treat the master as a **superset** — put
+every accomplishment you might ever want in it, and let each tailored resume
+be a subset.
+
 ## Tests
 
 ```bash
@@ -130,8 +179,9 @@ pip install -e ".[dev]"
 pytest
 ```
 
-34 tests, no network — source parsers run against recorded payload shapes.
-The adapters have separately been verified against live Greenhouse, Lever and
+81 tests, no network. Source parsers run against recorded payload shapes, and
+the tailoring pipeline runs end to end with the model call stubbed. The
+adapters have separately been verified against live Greenhouse, Lever and
 Ashby boards.
 
 ## Not doing, on purpose
@@ -141,6 +191,9 @@ Ashby boards.
   vendor-level takedowns. Not worth your primary professional account.
 - **No autonomous submission.** Bot protection on ATS forms is real, and the
   conversion data says volume is the losing strategy anyway.
+
+- **No fabrication.** Tailoring may only select and rephrase what your master
+  resume already says. Everything generated is verified back against it.
 
 Phase 3 will do assisted autofill — a real browser you're driving, with you on
 the submit button.

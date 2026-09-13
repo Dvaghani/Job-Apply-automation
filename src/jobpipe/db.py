@@ -9,6 +9,7 @@ from pathlib import Path
 from .models import (
     ALL_STATUSES,
     STATUS_APPLIED,
+    STATUS_APPROVED,
     STATUS_NEW,
     STATUS_REJECTED,
     STATUS_SCORED,
@@ -16,7 +17,7 @@ from .models import (
     utcnow,
 )
 
-SCHEMA = """
+TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS jobs (
     fingerprint   TEXT PRIMARY KEY,
     source        TEXT NOT NULL,
@@ -39,18 +40,59 @@ CREATE TABLE IF NOT EXISTS jobs (
     last_seen     TEXT NOT NULL,
     decided_at    TEXT,
     applied_at    TEXT,
-    notes         TEXT
+    notes         TEXT,
+    tailored_at   TEXT,
+    output_dir    TEXT
 );
+"""
+
+INDEX_DDL = """
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_score  ON jobs(score DESC);
 """
+
+# Every nullable column, so a database written by an older version can be
+# brought forward. CREATE TABLE only fires on a fresh file, so this is the
+# only thing standing between an existing jobs.db and a crash on upgrade.
+OPTIONAL_COLUMNS = {
+    "location": "TEXT",
+    "description": "TEXT",
+    "remote": "INTEGER DEFAULT 0",
+    "salary_min": "INTEGER",
+    "salary_max": "INTEGER",
+    "posted_at": "TEXT",
+    "score": "INTEGER",
+    "score_reason": "TEXT",
+    "score_flags": "TEXT",
+    "filter_reason": "TEXT",
+    "decided_at": "TEXT",
+    "applied_at": "TEXT",
+    "notes": "TEXT",
+    "tailored_at": "TEXT",
+    "output_dir": "TEXT",
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add any column this version expects and the file doesn't have.
+
+    Must run before the indexes: an index over a column the old table
+    lacks fails outright.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+    for column, decl in OPTIONAL_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {decl}")
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript(SCHEMA)
+    conn.executescript(TABLE_DDL)
+    _migrate(conn)
+    conn.executescript(INDEX_DDL)
+    conn.commit()
     return conn
 
 
@@ -122,6 +164,27 @@ def set_status(conn: sqlite3.Connection, fingerprint: str, status: str) -> None:
         WHERE fingerprint = ?
         """,
         (status, utcnow(), applied_at, fingerprint),
+    )
+
+
+def mark_tailored(conn: sqlite3.Connection, fingerprint: str, directory: str) -> None:
+    conn.execute(
+        "UPDATE jobs SET tailored_at = ?, output_dir = ? WHERE fingerprint = ?",
+        (utcnow(), directory, fingerprint),
+    )
+
+
+def untailored_approved(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Approved jobs with no tailored output yet — the tailoring work queue."""
+    return list(
+        conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE status = ? AND tailored_at IS NULL
+            ORDER BY score DESC
+            """,
+            (STATUS_APPROVED,),
+        )
     )
 
 

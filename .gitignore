@@ -8,6 +8,8 @@ venv/
 # Local config and personal data — never commit these
 config.yaml
 profile.md
+resume.json
+applications/
 *.db
 *.sqlite3
 .env

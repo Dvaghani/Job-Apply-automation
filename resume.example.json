@@ -1,0 +1,65 @@
+{
+  "$comment": "Copy to resume.json and replace with your real history. JSON Resume format (https://jsonresume.org/schema/). Tailoring selects and rewrites `highlights`, so put every accomplishment you might ever want to use in here — the master is the superset, each tailored resume is a subset. resume.json is gitignored.",
+  "basics": {
+    "name": "Your Name",
+    "label": "Backend Engineer",
+    "email": "you@example.com",
+    "phone": "+1 555 0100",
+    "location": { "city": "Toronto", "region": "ON" },
+    "profiles": [
+      { "network": "GitHub", "url": "https://github.com/yourname" },
+      { "network": "LinkedIn", "url": "https://linkedin.com/in/yourname" }
+    ],
+    "summary": "Backend engineer, 6 years, payments and distributed systems."
+  },
+  "work": [
+    {
+      "name": "Acme Payments",
+      "position": "Senior Backend Engineer",
+      "startDate": "2022-03",
+      "endDate": "",
+      "location": "Toronto, ON",
+      "highlights": [
+        "Built and owned a payments ledger service handling 2,000,000 transactions per day in Python and Postgres, cutting reconciliation from 4 hours to 6 minutes.",
+        "Led migration of a Django monolith to 7 event-driven services on Kafka, completed with no customer-visible downtime.",
+        "Designed the idempotency layer that eliminated duplicate charges, reducing payment support tickets by 38%.",
+        "Mentored 4 engineers; two were promoted to senior within 18 months.",
+        "Ran incident command for the payments on-call rotation and wrote the postmortem process the team still uses."
+      ]
+    },
+    {
+      "name": "Northwind Software",
+      "position": "Backend Engineer",
+      "startDate": "2019-06",
+      "endDate": "2022-02",
+      "location": "Toronto, ON",
+      "highlights": [
+        "Shipped a REST API in Go serving 12,000 requests per second at p99 under 80ms.",
+        "Cut AWS spend 22% by right-sizing EC2 instances and moving cold data to S3.",
+        "Introduced contract testing, reducing integration regressions by half."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": "University of Toronto",
+      "area": "Computer Science",
+      "studyType": "BSc",
+      "startDate": "2015-09",
+      "endDate": "2019-05"
+    }
+  ],
+  "skills": [
+    { "name": "Languages", "keywords": ["Python", "Go", "SQL", "TypeScript"] },
+    { "name": "Data", "keywords": ["PostgreSQL", "Kafka", "Redis"] },
+    { "name": "Infrastructure", "keywords": ["AWS", "Docker", "Terraform"] },
+    { "name": "Practices", "keywords": ["API design", "Incident response", "Mentoring"] }
+  ],
+  "projects": [
+    {
+      "name": "ledgerkit",
+      "description": "Open-source double-entry ledger primitives for Python. 400 GitHub stars.",
+      "url": "https://github.com/yourname/ledgerkit"
+    }
+  ]
+}

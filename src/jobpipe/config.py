@@ -44,6 +44,8 @@ class Config:
     min_score: int = 60
     db_path: str = "jobs.db"
     profile_path: str = str(DEFAULT_PROFILE_PATH)
+    resume_path: str = "resume.json"
+    output_dir: str = "applications"
 
     @property
     def greenhouse_boards(self) -> list[str]:
@@ -113,4 +115,6 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         min_score=int(data.get("min_score", 60)),
         db_path=data.get("db_path") or "jobs.db",
         profile_path=data.get("profile_path") or str(DEFAULT_PROFILE_PATH),
+        resume_path=data.get("resume_path") or "resume.json",
+        output_dir=data.get("output_dir") or "applications",
     )

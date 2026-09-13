@@ -6,8 +6,9 @@ import argparse
 import logging
 import sys
 
-from . import db, ingest, score, web
+from . import db, ingest, score, tailor, web
 from .config import ConfigError, load_config
+from .resume import ResumeError
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -33,6 +34,38 @@ def cmd_score(config, args) -> int:
     result = score.run(config, conn, limit=args.limit)
     print(f"scored {result['scored']} of {result['total']}, {result['failed']} failed")
     return 1 if result["failed"] and not result["scored"] else 0
+
+
+def cmd_tailor(config, args) -> int:
+    conn = db.connect(config.db_path)
+
+    if args.job:
+        fingerprints = list(args.job)
+    else:
+        rows = db.untailored_approved(conn)
+        if args.limit:
+            rows = rows[: args.limit]
+        fingerprints = [r["fingerprint"] for r in rows]
+
+    if not fingerprints:
+        print("nothing to tailor — approve some jobs in the review queue first")
+        return 0
+
+    result = tailor.run(config, conn, fingerprints, cover_letter=not args.no_cover_letter)
+    print(
+        f"tailored {result['tailored']}, {result['flagged']} with unverified claims, "
+        f"{result['failed']} failed"
+    )
+    print(f"output in {config.output_dir}/")
+    if result["flagged"]:
+        print(
+            "\nSome claims could not be traced to your master resume. "
+            "Read the NOTES.md in each flagged folder before sending.",
+            file=sys.stderr,
+        )
+    if result["failed"] and not result["tailored"]:
+        return 1
+    return 2 if (result["flagged"] and args.strict) else 0
 
 
 def cmd_review(config, args) -> int:
@@ -75,6 +108,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="ingest, then score")
     p_run.add_argument("--limit", type=int, default=None)
 
+    p_tailor = sub.add_parser(
+        "tailor", help="tailor your resume to approved jobs"
+    )
+    p_tailor.add_argument(
+        "job", nargs="*", help="job fingerprints (default: all approved, untailored)"
+    )
+    p_tailor.add_argument("--limit", type=int, default=None)
+    p_tailor.add_argument(
+        "--no-cover-letter", action="store_true", help="skip the cover letter"
+    )
+    p_tailor.add_argument(
+        "--strict", action="store_true",
+        help="exit non-zero if any claim fails verification",
+    )
+
     p_review = sub.add_parser("review", help="open the local review queue")
     p_review.add_argument("--host", default="127.0.0.1")
     p_review.add_argument("--port", type=int, default=5000)
@@ -86,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
 COMMANDS = {
     "ingest": cmd_ingest,
     "score": cmd_score,
+    "tailor": cmd_tailor,
     "run": cmd_run,
     "review": cmd_review,
     "stats": cmd_stats,
@@ -102,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         return COMMANDS[args.command](config, args)
-    except ConfigError as exc:
+    except (ConfigError, ResumeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
