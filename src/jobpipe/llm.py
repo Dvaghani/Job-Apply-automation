@@ -32,6 +32,16 @@ class LLMError(RuntimeError):
     pass
 
 
+def _around(text: str, position: int, width: int = 60) -> str:
+    """A short excerpt either side of `position`, for an error message.
+
+    A parse error reports a character offset, which says nothing on its own
+    when the document is four thousand characters of someone's cover letter.
+    """
+    start = max(0, position - width)
+    return text[start : position + width]
+
+
 def extract_json(text: str) -> dict:
     """Pull the first complete JSON object out of a model's reply.
 
@@ -69,9 +79,18 @@ def extract_json(text: str) -> dict:
             if depth == 0:
                 block = text[start : i + 1]
                 try:
-                    return json.loads(block)
+                    # strict=False allows raw control characters inside
+                    # strings. A model writing a multi-paragraph cover letter
+                    # emits literal newlines there rather than \n escapes, and
+                    # the default parser rejects the whole response over it —
+                    # losing a call that already cost time and usage. The
+                    # newlines are what we want in the text anyway.
+                    return json.loads(block, strict=False)
                 except json.JSONDecodeError as exc:
-                    raise LLMError(f"malformed JSON in response: {exc}") from exc
+                    raise LLMError(
+                        f"malformed JSON in response: {exc}\n"
+                        f"  near: {_around(block, exc.pos)!r}"
+                    ) from exc
     raise LLMError("unterminated JSON object in response")
 
 

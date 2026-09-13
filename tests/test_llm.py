@@ -193,3 +193,40 @@ def test_cli_reports_a_setup_error_without_a_traceback(monkeypatch, tmp_path, ca
     err = capsys.readouterr().err
     assert "Traceback" not in err
     assert "Claude Code" in err
+
+
+# --- control characters in model output -----------------------------------
+#
+# A cover letter is prose with paragraphs. Models write those as literal
+# newlines inside the JSON string rather than \n escapes, and the default
+# parser rejects the entire response over it — throwing away a call that
+# already cost time and usage. It showed up first on German output, where
+# the text is longer.
+
+def test_a_literal_newline_in_a_string_is_accepted():
+    block = '{"cover_letter": "Sehr geehrte Damen und Herren,\n\nmit Interesse..."}'
+    assert "\n\n" in extract_json(block)["cover_letter"]
+
+
+def test_paragraph_breaks_survive_rather_than_being_stripped():
+    block = '{"summary": "One.\n\nTwo."}'
+    assert extract_json(block)["summary"] == "One.\n\nTwo."
+
+
+def test_a_tab_inside_a_string_is_accepted():
+    assert extract_json('{"a": "x\ty"}')["a"] == "x\ty"
+
+
+def test_escaped_newlines_still_work():
+    assert extract_json('{"a": "x\ny"}')["a"] == "x\ny"
+
+
+def test_genuinely_broken_json_still_fails():
+    with pytest.raises(LLMError, match="malformed JSON"):
+        extract_json('{"a": "b",, }')
+
+
+def test_a_parse_error_shows_the_text_around_it():
+    """A character offset alone says nothing in 4,000 characters of prose."""
+    with pytest.raises(LLMError, match="near:"):
+        extract_json('{"a": "b",, }')
