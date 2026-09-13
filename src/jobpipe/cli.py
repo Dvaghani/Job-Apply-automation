@@ -6,8 +6,10 @@ import argparse
 import logging
 import sys
 
-from . import db, ingest, score, tailor, web
+from . import applicant as applicant_mod
+from . import autofill, db, ingest, score, tailor, web
 from .config import ConfigError, load_config
+from .applicant import ApplicantError
 from .resume import ResumeError
 
 
@@ -68,6 +70,35 @@ def cmd_tailor(config, args) -> int:
     return 2 if (result["flagged"] and args.strict) else 0
 
 
+def cmd_apply(config, args) -> int:
+    conn = db.connect(config.db_path)
+    row = db.get(conn, args.job)
+    if row is None:
+        print(f"error: no job with fingerprint {args.job}", file=sys.stderr)
+        return 2
+
+    me = applicant_mod.load(config.applicant_path)
+
+    print(f"{row['title']} @ {row['company']}")
+    print(f"  {autofill.apply_form_url(row['url'])}")
+    if not row["output_dir"]:
+        print("  (not tailored — run `jobpipe tailor` first to attach a resume)")
+
+    actions = autofill.run(row, me, headless=args.headless, wait=not args.no_wait)
+
+    filled = sum(1 for a in actions if a.action == "filled")
+    print(f"\n{filled} of {len(actions)} fields filled:\n")
+    for action in actions:
+        print(action)
+    print("\nNothing was submitted. Submit the form yourself in the browser.")
+
+    if args.mark_applied:
+        db.set_status(conn, args.job, "applied")
+        conn.commit()
+        print("Marked as applied.")
+    return 0
+
+
 def cmd_review(config, args) -> int:
     print(f"Review queue: http://{args.host}:{args.port}  (min score {config.min_score})")
     web.serve(config, host=args.host, port=args.port)
@@ -123,6 +154,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="exit non-zero if any claim fails verification",
     )
 
+    p_apply = sub.add_parser(
+        "apply", help="open a posting's form and fill it — never submits"
+    )
+    p_apply.add_argument("job", help="job fingerprint")
+    p_apply.add_argument(
+        "--headless", action="store_true",
+        help="run without a visible browser (inspection only — you cannot submit)",
+    )
+    p_apply.add_argument(
+        "--no-wait", action="store_true", help="close the browser immediately"
+    )
+    p_apply.add_argument(
+        "--mark-applied", action="store_true",
+        help="mark the job applied afterwards (only do this once you have submitted)",
+    )
+
     p_review = sub.add_parser("review", help="open the local review queue")
     p_review.add_argument("--host", default="127.0.0.1")
     p_review.add_argument("--port", type=int, default=5000)
@@ -135,6 +182,7 @@ COMMANDS = {
     "ingest": cmd_ingest,
     "score": cmd_score,
     "tailor": cmd_tailor,
+    "apply": cmd_apply,
     "run": cmd_run,
     "review": cmd_review,
     "stats": cmd_stats,
@@ -151,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         return COMMANDS[args.command](config, args)
-    except (ConfigError, ResumeError) as exc:
+    except (ConfigError, ResumeError, ApplicantError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:

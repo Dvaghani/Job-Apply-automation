@@ -13,7 +13,8 @@ right roles, not clicking submit.
 
 ```
 ingest (Greenhouse/Lever/Ashby/Adzuna) → hard filters → LLM fit score
-    → review queue (you decide) → tailor resume + cover letter → track
+    → review queue (you decide) → tailor resume + cover letter
+    → assisted autofill (you submit) → track
 ```
 
 ## Status
@@ -23,7 +24,7 @@ ingest (Greenhouse/Lever/Ashby/Adzuna) → hard filters → LLM fit score
 | 0 — Market research | ✅ [research/01-market-landscape.md](research/01-market-landscape.md) |
 | 1 — Ingest + filter + score + review | ✅ |
 | 2 — Resume/cover-letter tailoring | ✅ |
-| 3 — Assisted autofill on submit | Not started |
+| 3 — Assisted autofill on submit | ✅ |
 
 ## Install
 
@@ -35,11 +36,14 @@ pip install -e .
 cp config.example.yaml config.yaml     # your watchlist and filters
 cp profile.example.md  profile.md      # your background, for scoring
 cp resume.example.json resume.json     # your master resume, for tailoring
+cp applicant.example.yaml applicant.yaml   # your details, for filling forms
 export ANTHROPIC_API_KEY=sk-ant-...    # or run `ant auth login`
+
+pip install -e ".[browser]" && playwright install chromium   # for `apply`
 ```
 
-`config.yaml`, `profile.md`, `resume.json` and `applications/` are all
-gitignored — they're personal.
+`config.yaml`, `profile.md`, `resume.json`, `applicant.yaml` and
+`applications/` are all gitignored — they're personal.
 
 ## Use
 
@@ -49,6 +53,7 @@ jobpipe score      # score everything unscored, with Claude
 jobpipe run        # both of the above — the daily command
 jobpipe review     # open the review queue at localhost:5000
 jobpipe tailor     # tailor your resume to everything you approved
+jobpipe apply <fingerprint>   # open the form, fill it — you submit
 jobpipe stats      # counts by status
 ```
 
@@ -133,6 +138,60 @@ The model is also asked for `gaps` — what the posting wants that your resume
 genuinely can't support. That's deliberate: knowing you don't qualify is
 worth more than a document that papers over it.
 
+**Assisted autofill.** `jobpipe apply <fingerprint>` opens the posting's
+application form in a real browser, fills every field it can from
+`applicant.yaml`, attaches your tailored resume as a PDF, and then stops and
+hands you the keyboard.
+
+```
+12 of 16 fields filled:
+
+ + First Name *                      Ada
+ + Email Address                     ada@example.com
+ + Are you legally authorized to...  Yes
+ + Will you now or in the future...  No
+ + Resume/CV                         resume.pdf
+ - Female                            self-identification — yours to answer
+ - Protected Veteran Status          self-identification — yours to answer
+```
+
+**It cannot submit, by construction.** The element query selects only
+`input`, `select` and `textarea`; buttons are excluded from it, so there is
+no code path that reaches a Submit button. Filling never presses Enter
+either, so a single-field form can't submit by accident. Two tests assert
+this empirically against a real browser: the fixture form records every
+click and every submit attempt, and both must come back empty.
+
+Voluntary self-identification — gender, race, veteran and disability status
+— is **detected so it can be deliberately left blank**. Those questions are
+yours to answer or decline, and a script shouldn't guess them. Set
+`fill_self_identification: true` in `applicant.yaml` if you'd rather they
+were filled from your own stated values.
+
+Field matching handles the label shapes real ATS forms use: `label[for]`,
+a wrapping `<label>`, `aria-label`, a `<fieldset>` legend, a bare text node
+in a wrapper div, and placeholder-only inputs. Anything it can't identify is
+reported as unmatched rather than guessed at, so you know exactly what's
+still blank.
+
+Free-text questions come from an answer bank in `applicant.yaml`, keyed by
+substring, longest match wins:
+
+```yaml
+answers:
+  "authorized to work": "Yes"
+  "require sponsorship": "No"
+  "why do you want to work": >
+    I have spent six years on payments infrastructure...
+```
+
+Application forms are also the one place the resume needs to be a PDF, so
+`apply` renders `resume.html` to `resume.pdf` with the same browser before
+filling.
+
+If Playwright's bundled Chromium doesn't suit, point `JOBPIPE_CHROMIUM` at
+any Chrome or Chromium binary.
+
 ## Configuration
 
 `config.yaml` — watchlist and filters. Every filter key is optional; omit one
@@ -179,10 +238,14 @@ pip install -e ".[dev]"
 pytest
 ```
 
-81 tests, no network. Source parsers run against recorded payload shapes, and
-the tailoring pipeline runs end to end with the model call stubbed. The
-adapters have separately been verified against live Greenhouse, Lever and
-Ashby boards.
+145 tests, no network. Source parsers run against recorded payload shapes,
+the tailoring pipeline runs end to end with the model call stubbed, and
+autofill is driven by a real headless Chromium against a synthetic ATS form
+covering every label shape. The job-board adapters have separately been
+verified against live Greenhouse, Lever and Ashby boards.
+
+If the bundled Chromium build doesn't match your Playwright version, the
+browser tests skip rather than fail; set `JOBPIPE_CHROMIUM` to run them.
 
 ## Not doing, on purpose
 
@@ -190,10 +253,13 @@ Ashby boards.
   and scraping extensions outright, and 2026 enforcement escalated to
   vendor-level takedowns. Not worth your primary professional account.
 - **No autonomous submission.** Bot protection on ATS forms is real, and the
-  conversion data says volume is the losing strategy anyway.
+  conversion data says volume is the losing strategy anyway. `apply` fills
+  the form in a browser you are looking at; you read it and click Submit.
 
 - **No fabrication.** Tailoring may only select and rephrase what your master
   resume already says. Everything generated is verified back against it.
+- **No guessing at self-identification.** Detected, and left blank unless you
+  opt in.
 
-Phase 3 will do assisted autofill — a real browser you're driving, with you on
-the submit button.
+All four phases are in. What's left is using it: fill in your watchlist,
+filters, profile and master resume, then run it daily.

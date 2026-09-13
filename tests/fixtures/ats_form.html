@@ -1,0 +1,80 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Apply — Staff Backend Engineer</title></head>
+<body>
+<script>window.__clicked = [];</script>
+<h1>Apply: Staff Backend Engineer</h1>
+<form id="app" onsubmit="window.__clicked.push('SUBMITTED'); return false;">
+
+  <!-- label[for] — the standard shape -->
+  <label for="fn">First Name *</label>
+  <input id="fn" name="first_name" type="text">
+
+  <label for="ln">Last Name *</label>
+  <input id="ln" name="last_name" type="text">
+
+  <!-- aria-label only -->
+  <input id="em" name="q_8812" type="email" aria-label="Email Address">
+
+  <!-- placeholder only -->
+  <input id="ph" name="q_4471" type="tel" placeholder="Enter your phone number">
+
+  <!-- label wrapping the input -->
+  <label>LinkedIn Profile <input id="li" name="urls[LinkedIn]" type="url"></label>
+
+  <!-- bare text node in the wrapper div: common ATS shape -->
+  <div>Current Company
+    <input id="cc" name="q_9001" type="text">
+  </div>
+
+  <div>Current Title
+    <input id="ct" name="q_9002" type="text">
+  </div>
+
+  <label for="yoe">How many years of experience do you have?</label>
+  <input id="yoe" name="q_9003" type="number">
+
+  <label for="auth">Are you legally authorized to work in the United States?</label>
+  <select id="auth" name="q_auth">
+    <option value="">Select...</option>
+    <option value="1">Yes</option>
+    <option value="0">No</option>
+  </select>
+
+  <label for="spon">Will you now or in the future require sponsorship for an employment visa?</label>
+  <select id="spon" name="q_spon">
+    <option value="">Select...</option>
+    <option value="1">Yes</option>
+    <option value="0">No</option>
+  </select>
+
+  <label for="why">Why do you want to work here?</label>
+  <textarea id="why" name="q_why"></textarea>
+
+  <label for="cv">Resume/CV</label>
+  <input id="cv" name="resume" type="file">
+
+  <!-- Voluntary self-identification: must be left alone -->
+  <fieldset>
+    <legend>Gender</legend>
+    <label><input type="radio" name="gender" value="f"> Female</label>
+    <label><input type="radio" name="gender" value="m"> Male</label>
+    <label><input type="radio" name="gender" value="d"> Decline to self identify</label>
+  </fieldset>
+
+  <label for="vet">Protected Veteran Status</label>
+  <select id="vet" name="veteran">
+    <option value="">Select...</option>
+    <option value="n">I am not a protected veteran</option>
+  </select>
+
+  <!-- Must be ignored entirely -->
+  <input type="hidden" name="csrf" value="tok">
+  <input id="dis" type="text" name="disabled_field" disabled>
+  <div style="display:none"><input id="inv" type="text" name="hidden_q"></div>
+
+  <!-- Must never be touched -->
+  <button type="button" id="draft" onclick="window.__clicked.push('draft')">Save draft</button>
+  <input type="submit" id="sub" value="Submit Application"
+         onclick="window.__clicked.push('submit')">
+</form>
+</body></html>

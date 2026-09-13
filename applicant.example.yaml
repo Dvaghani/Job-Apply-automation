@@ -1,0 +1,42 @@
+# Copy to applicant.yaml. Gitignored — this is personal data.
+# Used by `jobpipe apply` to fill application forms. Nothing here is ever
+# sent anywhere except the form you are looking at in your own browser.
+
+fields:
+  first_name: Ada
+  last_name: Lovelace
+  email: ada@example.com
+  phone: "+1 555 0100"
+  location: "Toronto, ON, Canada"
+  city: Toronto
+  linkedin: https://linkedin.com/in/yourname
+  github: https://github.com/yourname
+  portfolio: https://yourname.dev
+  current_company: Acme Payments
+  current_title: Senior Backend Engineer
+  years_experience: "6"
+  work_authorization: "Yes"
+  sponsorship: "No"
+  salary_expectation: "Open to discussion"
+  start_date: "Two weeks from offer"
+  how_heard: Company website
+  pronouns: she/her
+
+# Free-text and dropdown questions. The key is matched as a substring of
+# the question, so keep keys short and distinctive. Longest match wins.
+answers:
+  "authorized to work": "Yes"
+  "require sponsorship": "No"
+  "willing to relocate": "Open to it for the right role"
+  "why do you want to work": >
+    I have spent six years on payments infrastructure and want to keep
+    solving reconciliation and correctness problems at scale.
+  "notice period": "Two weeks"
+  "hybrid": "Yes, comfortable with hybrid"
+  "how did you hear": "Company website"
+
+# Voluntary self-identification (gender, race, veteran, disability) is left
+# blank by default. These are yours to answer or decline, and a script
+# should not guess them. Set true only if you want them filled from the
+# `fields` block above.
+fill_self_identification: false

@@ -45,6 +45,7 @@ class Config:
     db_path: str = "jobs.db"
     profile_path: str = str(DEFAULT_PROFILE_PATH)
     resume_path: str = "resume.json"
+    applicant_path: str = "applicant.yaml"
     output_dir: str = "applications"
 
     @property
@@ -116,5 +117,6 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         db_path=data.get("db_path") or "jobs.db",
         profile_path=data.get("profile_path") or str(DEFAULT_PROFILE_PATH),
         resume_path=data.get("resume_path") or "resume.json",
+        applicant_path=data.get("applicant_path") or "applicant.yaml",
         output_dir=data.get("output_dir") or "applications",
     )

@@ -56,4 +56,5 @@ profile_path: profile.md
 
 # Master resume (JSON Resume format) and where tailored output is written.
 resume_path: resume.json
+applicant_path: applicant.yaml
 output_dir: applications

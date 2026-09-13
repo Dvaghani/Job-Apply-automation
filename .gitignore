@@ -9,6 +9,7 @@ venv/
 config.yaml
 profile.md
 resume.json
+applicant.yaml
 applications/
 *.db
 *.sqlite3
