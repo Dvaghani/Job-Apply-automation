@@ -85,6 +85,10 @@ def collect(config: Config, report: IngestReport) -> list[Job]:
                 app_id=az.get("app_id"),
                 app_key=az.get("app_key"),
                 max_pages=int(az.get("max_pages", 1)),
+                distance=az.get("distance"),
+                max_days_old=az.get("max_days_old"),
+                what_or=az.get("what_or", ""),
+                title_only=az.get("title_only", ""),
             )
             log.info("adzuna/%r: %d jobs", query, len(found))
             jobs.extend(found)

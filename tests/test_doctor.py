@@ -154,3 +154,79 @@ def test_active_block_is_not_reported_as_commented(tmp_path):
 def test_commented_check_survives_a_missing_file():
     assert doctor.check_commented_out(Config(path="/nonexistent/config.yaml")) == []
     assert doctor.check_commented_out(Config()) == []
+
+
+# --- per-query probing ----------------------------------------------------
+
+def _az(**kw):
+    base = {"app_id": "a", "app_key": "b", "country": "de",
+            "queries": ["narrow query", "broad query"]}
+    base.update(kw)
+    return Config(sources={"adzuna": base})
+
+
+def test_probe_reports_each_query_separately(monkeypatch):
+    from jobpipe.sources import adzuna as az_source
+    counts = {"narrow query": [], "broad query": [object(), object(), object()]}
+    monkeypatch.setattr(az_source, "fetch", lambda **kw: counts[kw["what"]])
+
+    checks = doctor.probe_adzuna(_az())
+    by_label = {label.strip(): (status, detail) for status, label, detail in checks}
+    assert by_label["narrow query"][0] == doctor.WARN
+    assert "too narrow" in by_label["narrow query"][1]
+    assert by_label["broad query"][0] == doctor.OK
+    assert "3 job(s)" in by_label["broad query"][1]
+
+
+def test_probe_summarises_the_total(monkeypatch):
+    from jobpipe.sources import adzuna as az_source
+    monkeypatch.setattr(az_source, "fetch", lambda **kw: [object()])
+    checks = doctor.probe_adzuna(_az())
+    summary = [d for s, l, d in checks if l == "adzuna live check"][0]
+    assert "2 job(s) across 2 quer(ies)" in summary
+
+
+def test_probe_suggests_a_radius_when_everything_is_empty(monkeypatch):
+    from jobpipe.sources import adzuna as az_source
+    monkeypatch.setattr(az_source, "fetch", lambda **kw: [])
+    checks = doctor.probe_adzuna(_az(where="Chemnitz"))
+    summary = [d for s, l, d in checks if l == "adzuna live check"][0]
+    assert "distance: 50" in summary
+
+
+def test_probe_does_not_suggest_a_radius_when_one_is_set(monkeypatch):
+    from jobpipe.sources import adzuna as az_source
+    monkeypatch.setattr(az_source, "fetch", lambda **kw: [])
+    checks = doctor.probe_adzuna(_az(where="Chemnitz", distance=50))
+    summary = [d for s, l, d in checks if l == "adzuna live check"][0]
+    assert "distance" not in summary
+
+
+def test_probe_flags_credential_errors_distinctly(monkeypatch):
+    from jobpipe.sources import adzuna as az_source
+    from jobpipe.sources.base import SourceError
+
+    def boom(**kw):
+        raise SourceError("https://api.adzuna.com/... returned HTTP 503")
+
+    monkeypatch.setattr(az_source, "fetch", boom)
+    checks = doctor.probe_adzuna(_az())
+    assert all(s == doctor.FAIL for s, _, _ in checks)
+    assert "bad credentials" in checks[0][2]
+
+
+def test_adzuna_fetch_forwards_tuning_parameters(monkeypatch):
+    from jobpipe.sources import adzuna as az_source
+    captured = {}
+
+    def fake_fetch_json(url, params=None):
+        captured.update(params or {})
+        return {"results": []}
+
+    monkeypatch.setattr(az_source, "fetch_json", fake_fetch_json)
+    az_source.fetch("engineer", country="de", where="Chemnitz", app_id="a",
+                    app_key="b", distance=50, max_days_old=30, what_or="python c#")
+    assert captured["distance"] == 50
+    assert captured["max_days_old"] == 30
+    assert captured["what_or"] == "python c#"
+    assert captured["where"] == "Chemnitz"

@@ -77,8 +77,21 @@ If `ingest` returns less than you expect, run **`jobpipe doctor`** first. A
 misconfigured source produces no jobs *and* no error, which looks exactly like
 "nothing new today" — doctor makes the difference visible, including the
 common YAML slip of putting `adzuna:` at the top level instead of under
-`sources:`. Add `--probe` to make one real Adzuna call and prove the
-credentials work.
+`sources:`, or leaving the whole block commented out.
+
+`--probe` runs every configured Adzuna query for real and reports the count
+each one returns, which is what makes queries tunable:
+
+```
+Live check
+  +   python                       31 job(s)
+  !   HiL Testautomatisierung      0 job(s)  — too narrow, try fewer words
+```
+
+Adzuna requires **every word** in a query to match, so a long compound phrase
+matches almost nothing. Keep queries to one or two words and let the fit
+scorer do the filtering — that's what it's for. If a city returns nothing, add
+`distance: 50` to search a wider radius around it.
 
 A daily cron is the intended shape:
 

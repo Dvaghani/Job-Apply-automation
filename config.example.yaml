@@ -37,10 +37,12 @@ sources:
   #   app_key: your_app_key     # or set ADZUNA_APP_KEY
   #   country: us
   #   where: "San Francisco"
-  #   max_pages: 1
-  #   queries:
-  #     - "backend engineer python"
-  #     - "platform engineer"
+  #   distance: 50              # km radius — without this the radius is tight
+  #   max_days_old: 30
+  #   max_pages: 2
+  #   queries:                  # each word in a query must match, so keep
+  #     - "python"              # them SHORT. Long phrases return nothing.
+  #     - "backend engineer"
 
 # Deterministic rules applied before any LLM call. Each one is optional;
 # omit a key to skip that check. These are free — use them aggressively.

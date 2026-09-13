@@ -137,29 +137,53 @@ def check_sources(config) -> list[tuple[str, str, str]]:
     return out
 
 
-def probe_adzuna(config) -> tuple[str, str, str]:
-    """Make one real Adzuna call to prove the credentials work."""
+def probe_adzuna(config) -> list[tuple[str, str, str]]:
+    """Run every configured query and report how many jobs each returns.
+
+    Per-query counts are what makes tuning possible: a zero means the
+    query is too narrow, not that the credentials are wrong.
+    """
     az = config.adzuna
     app_id = az.get("app_id") or os.environ.get("ADZUNA_APP_ID")
     app_key = az.get("app_key") or os.environ.get("ADZUNA_APP_KEY")
     if not app_id or not app_key:
-        return _check(WARN, "adzuna live check", "skipped — no credentials")
+        return [_check(WARN, "adzuna live check", "skipped — no credentials")]
 
     from .sources import adzuna
     from .sources.base import SourceError
 
-    query = (az.get("queries") or ["engineer"])[0]
-    try:
-        jobs = adzuna.fetch(
-            what=query, country=az.get("country", "us"), where=az.get("where", ""),
-            app_id=app_id, app_key=app_key, max_pages=1, results_per_page=10,
-        )
-    except SourceError as exc:
-        detail = str(exc)[:120]
-        if "401" in detail or "403" in detail or "503" in detail:
-            detail += "  (Adzuna answers bad credentials this way — re-check app_id/app_key)"
-        return _check(FAIL, "adzuna live check", detail)
-    return _check(OK, "adzuna live check", f"{query!r} returned {len(jobs)} job(s)")
+    queries = az.get("queries") or []
+    where = az.get("where", "")
+    distance = az.get("distance")
+    out = []
+    total = 0
+
+    for query in queries:
+        try:
+            jobs = adzuna.fetch(
+                what=query, country=az.get("country", "us"), where=where,
+                app_id=app_id, app_key=app_key, max_pages=1, results_per_page=50,
+                distance=distance, max_days_old=az.get("max_days_old"),
+            )
+        except SourceError as exc:
+            detail = str(exc)[:110]
+            if any(code in detail for code in ("401", "403", "503")):
+                detail += "  (Adzuna answers bad credentials this way)"
+            out.append(_check(FAIL, f"  {query[:34]}", detail))
+            continue
+        total += len(jobs)
+        status = OK if jobs else WARN
+        note = f"{len(jobs)} job(s)" + ("" if jobs else "  — too narrow, try fewer words")
+        out.append(_check(status, f"  {query[:34]}", note))
+
+    if queries and total == 0:
+        hint = "every query returned nothing"
+        if where and not distance:
+            hint += f" — `where: {where}` with no `distance:` searches a tight radius; try `distance: 50`"
+        out.append(_check(FAIL, "adzuna live check", hint))
+    elif queries:
+        out.append(_check(OK, "adzuna live check", f"{total} job(s) across {len(queries)} quer(ies)"))
+    return out
 
 
 def run(config, probe: bool = False) -> int:
@@ -170,7 +194,7 @@ def run(config, probe: bool = False) -> int:
         ("Sources", check_sources(config)),
     ]
     if probe and config.adzuna:
-        sections.append(("Live check", [probe_adzuna(config)]))
+        sections.append(("Live check", probe_adzuna(config)))
 
     failures = 0
     for title, checks in sections:

@@ -31,7 +31,18 @@ def fetch(
     app_key: str | None = None,
     max_pages: int = 1,
     results_per_page: int = 50,
+    distance: int | None = None,
+    max_days_old: int | None = None,
+    what_or: str = "",
+    title_only: str = "",
 ) -> list[Job]:
+    """Search Adzuna.
+
+    `what` treats multiple words as *all must match*, which makes a long
+    German compound phrase very restrictive. `what_or` matches any of the
+    words instead, and `distance` widens the radius around `where` — both
+    matter a lot for a small city.
+    """
     app_id = app_id or os.environ.get("ADZUNA_APP_ID")
     app_key = app_key or os.environ.get("ADZUNA_APP_KEY")
     if not app_id or not app_key:
@@ -51,6 +62,14 @@ def fetch(
         }
         if where:
             params["where"] = where
+        if distance is not None:
+            params["distance"] = distance
+        if max_days_old is not None:
+            params["max_days_old"] = max_days_old
+        if what_or:
+            params["what_or"] = what_or
+        if title_only:
+            params["title_only"] = title_only
 
         data = fetch_json(API.format(country=country, page=page), params=params)
         if not isinstance(data, dict):
