@@ -1,34 +1,19 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>jobpipe — review queue</title>
-<style>
-  :root {
-    --bg: #fbfaf8; --fg: #1a1a1a; --muted: #6b6b6b;
-    --line: #e3e0da; --card: #fff; --accent: #c2410c;
-    --good: #15803d; --mid: #a16207; --low: #9ca3af;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #16161a; --fg: #ecebe8; --muted: #9a9a96;
-      --line: #2e2e34; --card: #1e1e23; --accent: #fb923c;
-      --good: #4ade80; --mid: #fbbf24; --low: #6b7280;
-    }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg);
-         font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
-  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
-  nav { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 24px; }
-  nav a { padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px;
-          text-decoration: none; color: var(--muted); font-size: 13px; }
-  nav a.on { background: var(--fg); color: var(--bg); border-color: var(--fg); }
-  .job { background: var(--card); border: 1px solid var(--line);
-         border-radius: 10px; padding: 16px 18px; margin-bottom: 12px; }
+{% extends "base.html" %}
+
+{% block title %}jobpipe — review queue{% endblock %}
+{% block heading %}Review queue{% endblock %}
+{% block subtitle %}
+  {{ stats.new }} unscored &middot; {{ stats.to_review }} awaiting review &middot;
+  {{ stats.below }} below {{ min_score }} &middot;
+  {{ stats.approved }} approved &middot; {{ stats.applied }} applied &middot;
+  {{ stats.rejected }} rejected
+{% endblock %}
+
+{% block style %}
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 20px; }
+  .filters a { padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px;
+               text-decoration: none; color: var(--muted); font-size: 13px; }
+  .filters a.on { color: var(--fg); border-color: var(--muted); }
   .top { display: flex; gap: 12px; align-items: baseline; }
   .score { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;
            min-width: 2.2em; }
@@ -50,32 +35,19 @@
               border-radius: 4px; border: 1px solid var(--line);
               font-size: 12px; color: var(--fg); }
   .acts { display: flex; gap: 8px; margin-top: 14px; }
-  button { font: inherit; font-size: 13px; padding: 5px 14px; cursor: pointer;
-           border: 1px solid var(--line); border-radius: 6px;
-           background: var(--bg); color: var(--fg); }
-  button:hover { border-color: var(--muted); }
-  button.yes { background: var(--fg); color: var(--bg); border-color: var(--fg); }
-  .empty { color: var(--muted); padding: 48px 0; text-align: center; }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <h1>Review queue</h1>
-  <div class="sub">
-    {{ stats.new }} unscored &middot; {{ stats.scored }} awaiting review &middot;
-    {{ stats.approved }} approved &middot; {{ stats.applied }} applied &middot;
-    {{ stats.rejected }} rejected
+{% endblock %}
+
+{% block content %}
+  <div class="filters">
+    {% for s, label in [('scored','To review'), ('below','Below ' ~ min_score),
+                        ('approved','Approved'), ('applied','Applied'),
+                        ('rejected','Rejected'), ('new','Unscored')] %}
+      <a href="{{ url_for('review', status=s) }}" class="{{ 'on' if status == s }}">{{ label }}</a>
+    {% endfor %}
   </div>
 
-  <nav>
-    {% for s, label in [('scored','To review'), ('approved','Approved'),
-                        ('applied','Applied'), ('rejected','Rejected'), ('new','Unscored')] %}
-      <a href="{{ url_for('index', status=s) }}" class="{{ 'on' if status == s }}">{{ label }}</a>
-    {% endfor %}
-  </nav>
-
   {% for job in jobs %}
-    <div class="job">
+    <div class="card">
       <div class="top">
         {% if job.score is not none %}
           <div class="score {{ 's-good' if job.score >= 85 else 's-mid' if job.score >= 70 else 's-low' }}">
@@ -98,10 +70,11 @@
       {% if job.tailored_at %}
         <p class="tailored">Tailored &rarr; <code>{{ job.output_dir }}</code></p>
       {% elif status == 'approved' %}
-        <p class="tailored pending">Not tailored yet — run <code>jobpipe tailor</code></p>
+        <p class="tailored pending">Not tailored yet — run Tailor on the dashboard</p>
       {% endif %}
       {% if status in ('approved', 'applied') %}
-        <p class="cmd">Fill the form: <code>jobpipe apply {{ job.fingerprint }}</code></p>
+        <p class="cmd">Fill the form: <code>jobpipe apply {{ job.fingerprint }}</code>
+          — or use the dashboard.</p>
       {% endif %}
       {% if job.filter_reason %}<p class="reason"><em>Filtered: {{ job.filter_reason }}</em></p>{% endif %}
 
@@ -126,9 +99,13 @@
   {% else %}
     <div class="empty">
       Nothing here.
-      {% if status == 'scored' %}Run <code>jobpipe ingest</code> then <code>jobpipe score</code>.{% endif %}
+      {% if status == 'scored' and stats.below %}
+        <br>{{ stats.below }} scored job(s) came in under {{ min_score }} —
+        see <a href="{{ url_for('review', status='below') }}">Below {{ min_score }}</a>.
+        If they all look reasonable, <code>min_score</code> is set too high.
+      {% elif status == 'scored' %}
+        Run <b>Ingest</b> then <b>Score</b> on the dashboard.
+      {% endif %}
     </div>
   {% endfor %}
-</div>
-</body>
-</html>
+{% endblock %}
