@@ -9,12 +9,33 @@ the bullets are addressable.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
 class ResumeError(RuntimeError):
     pass
+
+
+# Section headings per output language. A German resume under English
+# headings reads as a translation accident, and "Present" in a date range
+# gives it away immediately.
+HEADINGS = {
+    "en": {
+        "summary": "Summary", "experience": "Experience", "projects": "Projects",
+        "skills": "Skills", "education": "Education", "languages": "Languages",
+        "present": "Present",
+    },
+    "de": {
+        "summary": "Profil", "experience": "Berufserfahrung", "projects": "Projekte",
+        "skills": "Kenntnisse", "education": "Ausbildung", "languages": "Sprachen",
+        "present": "heute",
+    },
+}
+
+
+def headings(language: str) -> dict:
+    return HEADINGS.get(language, HEADINGS["en"])
 
 
 @dataclass
@@ -50,6 +71,9 @@ class Resume:
     skills: list[dict]
     projects: list[dict]
     raw: dict
+    # Defaulted so it trails `raw`: appending here keeps every existing
+    # positional construction of Resume working.
+    languages: list[dict] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -118,15 +142,26 @@ def load(path: str | Path) -> Resume:
         skills=data.get("skills") or [],
         projects=data.get("projects") or [],
         raw=data,
+        languages=data.get("languages") or [],
     )
 
 
-def render_markdown(resume: Resume, tailored) -> str:
+def role_dates(role: Role, language: str = "en") -> str:
+    """A role's date range, with "Present" in the output language."""
+    if role.start and role.end:
+        return f"{role.start} – {role.end}"
+    if role.start:
+        return f"{role.start} – {headings(language)['present']}"
+    return role.end or ""
+
+
+def render_markdown(resume: Resume, tailored, language: str = "en") -> str:
     """Render a tailored resume to Markdown.
 
     `tailored` is a `tailor.Tailoring`; only the bullets it selected are
     emitted, in the order it chose.
     """
+    h = headings(language)
     b = resume.basics
     lines: list[str] = [f"# {b.get('name', '')}"]
 
@@ -143,44 +178,76 @@ def render_markdown(resume: Resume, tailored) -> str:
         lines += ["", " · ".join(contact)]
 
     if tailored.summary:
-        lines += ["", "## Summary", "", tailored.summary]
+        lines += ["", "## " + h["summary"], "", tailored.summary]
 
     selected = {r.role_index: r for r in tailored.roles}
     if selected:
-        lines += ["", "## Experience"]
+        lines += ["", "## " + h["experience"]]
         for role in resume.roles:
             chosen = selected.get(role.index)
             if not chosen or not chosen.bullets:
                 continue
             lines += ["", f"### {role.position} — {role.name}"]
-            meta = " · ".join(x for x in [role.dates, role.location] if x)
+            meta = " · ".join(
+                x for x in [role_dates(role, language), role.location] if x
+            )
             if meta:
                 lines += [f"*{meta}*"]
             lines += [""]
             lines += [f"- {bullet.text}" for bullet in chosen.bullets]
 
+    # Everything below is copied from the master, not rewritten by the model.
+    # That is deliberate: it is the reason these sections need no verification
+    # pass — there is no route by which a project or a thesis could acquire a
+    # claim you did not write yourself.
+    if resume.projects:
+        lines += ["", "## " + h["projects"]]
+        for project in resume.projects:
+            lines += ["", f"### {project.get('name', '')}"]
+            if project.get("description"):
+                lines += [f"*{project['description']}*", ""]
+            lines += [f"- {h}" for h in project.get("highlights") or []]
+
     if tailored.selected_skills:
-        lines += ["", "## Skills", "", ", ".join(tailored.selected_skills)]
+        lines += ["", "## " + h["skills"], "", ", ".join(tailored.selected_skills)]
 
     if resume.education:
-        lines += ["", "## Education"]
+        lines += ["", "## " + h["education"]]
         for edu in resume.education:
             degree = " ".join(
                 x for x in [edu.get("studyType"), edu.get("area")] if x
             )
-            dates = edu.get("endDate", "")
+            dates = " – ".join(
+                x for x in [edu.get("startDate"), edu.get("endDate")] if x
+            )
             entry = f"**{edu.get('institution', '')}**"
             if degree:
                 entry += f" — {degree}"
             if dates:
                 entry += f" ({dates})"
             lines += ["", entry]
+            if edu.get("location"):
+                lines += [f"*{edu['location']}*"]
+            # The thesis lives here. On a perception or ADAS posting it is
+            # often the single most relevant thing on the page, and it was
+            # being dropped entirely.
+            if edu.get("summary"):
+                lines += ["", edu["summary"]]
+
+    if resume.languages:
+        spoken = ", ".join(
+            f"{item.get('language', '')} ({item.get('fluency', '')})".replace(" ()", "")
+            for item in resume.languages
+            if item.get("language")
+        )
+        if spoken:
+            lines += ["", "## " + h["languages"], "", spoken]
 
     return "\n".join(lines).strip() + "\n"
 
 
 HTML_SHELL = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="{lang}"><head><meta charset="utf-8">
 <title>{name} — {role}</title>
 <style>
   body {{ max-width: 7.5in; margin: 0 auto; padding: 0.6in 0.5in;
@@ -201,9 +268,11 @@ HTML_SHELL = """<!doctype html>
 """
 
 
-def render_html(resume: Resume, tailored, job_title: str = "") -> str:
+def render_html(
+    resume: Resume, tailored, job_title: str = "", language: str = "en"
+) -> str:
     """Very small Markdown subset -> HTML. Print this to get a PDF."""
-    md = render_markdown(resume, tailored)
+    md = render_markdown(resume, tailored, language)
     out: list[str] = []
     in_list = False
 
@@ -238,7 +307,8 @@ def render_html(resume: Resume, tailored, job_title: str = "") -> str:
     close_list()
 
     return HTML_SHELL.format(
-        name=_escape(resume.name), role=_escape(job_title), body="\n".join(out)
+        name=_escape(resume.name), role=_escape(job_title),
+        lang=language, body="\n".join(out),
     )
 
 
