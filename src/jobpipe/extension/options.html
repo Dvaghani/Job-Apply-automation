@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>jobpipe — settings</title>
+<style>
+  body { margin: 0; padding: 28px; max-width: 520px;
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         color: #1a1a1a; background: #fbfaf8; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #ecebe8; background: #16161a; }
+    input { color: #ecebe8; background: #1e1e23; border-color: #3a3a42; }
+  }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  p.sub { color: #6b6b6b; font-size: 13px; margin: 0 0 22px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 16px 0 5px; }
+  input { width: 100%; padding: 7px 9px; font: inherit; font-size: 13px;
+          border: 1px solid #d8d5cf; border-radius: 6px; background: #fff; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 20px; }
+  button { font: inherit; font-size: 13px; padding: 7px 16px; border-radius: 6px;
+           border: 1px solid #c9c6c0; background: #fff; cursor: pointer; }
+  button.primary { background: #1a1a1a; color: #fbfaf8; border-color: #1a1a1a; }
+  .note { font-size: 12.5px; color: #6b6b6b; margin-top: 6px; }
+  #say { font-size: 13px; margin-left: 4px; }
+  .ok { color: #15803d; } .bad { color: #b91c1c; }
+</style>
+</head>
+<body>
+  <h1>jobpipe form filler</h1>
+  <p class="sub">Where your local jobpipe server is, and the token it trusts.</p>
+
+  <label for="server">Server</label>
+  <input id="server" type="text" placeholder="http://127.0.0.1:5000">
+  <div class="note">The same address <code>jobpipe dashboard</code> prints.</div>
+
+  <label for="token">Token</label>
+  <input id="token" type="text" placeholder="paste from the dashboard">
+  <div class="note">
+    Shown on the dashboard under “Chrome extension”, and stored in
+    <code>.jobpipe-token</code> in your project folder.
+  </div>
+
+  <div class="row">
+    <button class="primary" id="save">Save</button>
+    <button id="test">Test connection</button>
+    <span id="say"></span>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

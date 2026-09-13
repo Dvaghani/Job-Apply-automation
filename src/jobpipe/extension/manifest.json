@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "jobpipe form filler",
+  "version": "0.1.0",
+  "description": "Fill a job application form from your jobpipe applicant file, in your own browser. Never submits, never types a password.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1:5000/*",
+    "http://localhost:5000/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Fill this form with jobpipe" },
+  "options_page": "options.html"
+}

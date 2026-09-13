@@ -1,0 +1,126 @@
+/* The panel sits on someone else's page, so every rule is scoped under the
+   panel id and every property it relies on is set explicitly. Inheriting
+   from a careers portal's stylesheet is how a floating widget ends up with
+   48px serif text on a purple background. */
+
+#jobpipe-panel {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483647;
+  width: 340px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e23;
+  color: #ecebe8;
+  border: 1px solid #3a3a42;
+  border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-align: left;
+}
+
+#jobpipe-panel.jp-hidden { display: none; }
+
+#jobpipe-panel * { box-sizing: border-box; font-family: inherit; }
+
+#jobpipe-panel .jp-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #2e2e34;
+  cursor: move;
+  user-select: none;
+}
+
+#jobpipe-panel .jp-name { font-weight: 600; letter-spacing: 0.01em; }
+#jobpipe-panel .jp-grow { flex: 1; }
+
+#jobpipe-panel .jp-x {
+  background: transparent;
+  border: 0;
+  color: #9a9a96;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+#jobpipe-panel .jp-x:hover { color: #ecebe8; }
+
+#jobpipe-panel .jp-body {
+  padding: 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+#jobpipe-panel .jp-job {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  color: #ecebe8;
+  background: #16161a;
+  border: 1px solid #3a3a42;
+  border-radius: 6px;
+}
+
+#jobpipe-panel .jp-fill {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #16161a;
+  background: #ecebe8;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+#jobpipe-panel .jp-fill:disabled { opacity: 0.5; cursor: default; }
+
+#jobpipe-panel .jp-status { font-size: 12.5px; color: #9a9a96; }
+#jobpipe-panel .jp-status.jp-ok { color: #4ade80; }
+#jobpipe-panel .jp-status.jp-warn { color: #fbbf24; }
+
+#jobpipe-panel .jp-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font: 11.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+#jobpipe-panel .jp-row {
+  color: #9a9a96;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#jobpipe-panel .jp-row.jp-filled { color: #d6d4cf; }
+#jobpipe-panel .jp-row.jp-failed,
+#jobpipe-panel .jp-row.jp-warn { color: #fbbf24; white-space: normal; }
+
+#jobpipe-panel .jp-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid #2e2e34;
+  font-size: 11.5px;
+  color: #7c7c78;
+}
+
+#jobpipe-panel .jp-foot span { flex: 1; }
+
+#jobpipe-panel .jp-opts {
+  flex: none;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  color: #9a9a96;
+  background: transparent;
+  border: 1px solid #3a3a42;
+  border-radius: 5px;
+  cursor: pointer;
+}
+#jobpipe-panel .jp-opts:hover { color: #ecebe8; border-color: #55555f; }
