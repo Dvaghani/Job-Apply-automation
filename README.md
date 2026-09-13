@@ -67,6 +67,7 @@ jobpipe score      # score everything unscored, with Claude
 jobpipe run        # both of the above — the daily command
 jobpipe review     # open the review queue at localhost:5000
 jobpipe tailor     # tailor your resume to everything you approved
+jobpipe apply      # list approved jobs and their fingerprints
 jobpipe apply <fingerprint>   # open the form, fill it — you submit
 jobpipe stats      # counts by status
 ```
@@ -161,7 +162,9 @@ The model is also asked for `gaps` — what the posting wants that your resume
 genuinely can't support. That's deliberate: knowing you don't qualify is
 worth more than a document that papers over it.
 
-**Assisted autofill.** `jobpipe apply <fingerprint>` opens the posting's
+**Assisted autofill.** Run `jobpipe apply` with no arguments to see what's
+approved and ready, each with the exact command to run. Then
+`jobpipe apply <fingerprint>` opens the posting's
 application form in a real browser, fills every field it can from
 `applicant.yaml`, attaches your tailored resume as a PDF, and then stops and
 hands you the keyboard.

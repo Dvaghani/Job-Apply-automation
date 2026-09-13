@@ -166,3 +166,57 @@ def test_review_queue_shows_tailored_state(setup, monkeypatch):
     after = client.get("/?status=approved").get_data(as_text=True)
     assert "Tailored" in after
     assert "globex-staff-backend-engineer" in after
+
+
+def test_apply_without_a_fingerprint_lists_approved_jobs(setup, monkeypatch, capsys):
+    """`jobpipe apply` with no argument must be a picker, not an error —
+    the fingerprint is otherwise invisible to the user."""
+    from jobpipe.cli import main
+    config, conn, fp = setup
+    cfg = tmp_config(config)
+
+    assert main(["-c", cfg, "apply"]) == 0
+    out = capsys.readouterr().out
+    assert fp in out
+    assert "jobpipe apply" in out
+    assert "NOT tailored" in out
+
+
+def test_apply_lists_tailored_state_after_tailoring(setup, monkeypatch, capsys):
+    from jobpipe.cli import main
+    config, conn, fp = setup
+    monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
+    monkeypatch.setattr(tailor.llm, "build", lambda c: _FakeBackend())
+    tailor.run(config, conn, [fp])
+
+    assert main(["-c", tmp_config(config), "apply"]) == 0
+    out = capsys.readouterr().out
+    assert "NOT tailored" not in out
+    assert "tailored" in out
+
+
+def test_apply_with_no_approved_jobs_explains_the_next_step(tmp_path, capsys):
+    from jobpipe.cli import main
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(f"db_path: {tmp_path / 'empty.db'}\nprofile_path: {tmp_path / 'p.md'}\n")
+    assert main(["-c", str(cfg), "apply"]) == 0
+    assert "jobpipe review" in capsys.readouterr().out
+
+
+def test_apply_with_an_unknown_fingerprint_points_at_the_list(setup, capsys):
+    from jobpipe.cli import main
+    config, conn, fp = setup
+    assert main(["-c", tmp_config(config), "apply", "deadbeef"]) == 2
+    assert "no arguments to list" in capsys.readouterr().err
+
+
+def tmp_config(config) -> str:
+    """Write a config file mirroring the fixture's in-memory Config."""
+    from pathlib import Path
+    path = Path(config.db_path).parent / "config.yaml"
+    path.write_text(
+        f"db_path: {config.db_path}\n"
+        f"resume_path: {config.resume_path}\n"
+        f"output_dir: {config.output_dir}\n"
+    )
+    return str(path)

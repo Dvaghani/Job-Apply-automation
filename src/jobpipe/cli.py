@@ -11,6 +11,7 @@ from . import autofill, db, ingest, score, tailor, web
 from .config import ConfigError, load_config
 from .applicant import ApplicantError
 from .llm import LLMError
+from .models import STATUS_APPROVED
 from .resume import ResumeError
 
 
@@ -71,11 +72,40 @@ def cmd_tailor(config, args) -> int:
     return 2 if (result["flagged"] and args.strict) else 0
 
 
+def _list_applyable(conn) -> int:
+    """No fingerprint given — show what's ready, with the command to run."""
+    rows = db.by_status(conn, STATUS_APPROVED)
+    if not rows:
+        print("Nothing approved yet. Run `jobpipe review` and approve some jobs first.")
+        return 0
+
+    print(f"{len(rows)} approved job(s):\n")
+    for row in rows:
+        tailored = "tailored" if row["tailored_at"] else "NOT tailored"
+        score = row["score"] if row["score"] is not None else "--"
+        print(f"  [{score:>3}] {row['title'][:46]}")
+        print(f"        {row['company']}  ·  {tailored}")
+        print(f"        jobpipe apply {row['fingerprint']}")
+        print()
+
+    untailored = [r for r in rows if not r["tailored_at"]]
+    if untailored:
+        print(f"{len(untailored)} of these have no tailored resume yet — "
+              "run `jobpipe tailor` first.")
+    return 0
+
+
 def cmd_apply(config, args) -> int:
     conn = db.connect(config.db_path)
+
+    if not args.job:
+        return _list_applyable(conn)
+
     row = db.get(conn, args.job)
     if row is None:
         print(f"error: no job with fingerprint {args.job}", file=sys.stderr)
+        print("Run `jobpipe apply` with no arguments to list approved jobs.",
+              file=sys.stderr)
         return 2
 
     me = applicant_mod.load(config.applicant_path)
@@ -158,7 +188,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_apply = sub.add_parser(
         "apply", help="open a posting's form and fill it — never submits"
     )
-    p_apply.add_argument("job", help="job fingerprint")
+    p_apply.add_argument(
+        "job", nargs="?", default=None,
+        help="job fingerprint; omit to list approved jobs and their fingerprints",
+    )
     p_apply.add_argument(
         "--headless", action="store_true",
         help="run without a visible browser (inspection only — you cannot submit)",
