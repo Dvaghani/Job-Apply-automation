@@ -38,6 +38,13 @@ clearance, on-site requirements, or visa restrictions.
 In `reason`, give one or two sentences of specific, concrete justification \
 citing the posting. Do not hedge and do not restate the job title.
 
+Judge a requirement only where the posting states one. In particular, the \
+language a posting is *written* in is not a requirement: most postings are \
+written in the local language regardless of the team's working language, and \
+scoring that down rejects an entire market for no evidence. Weigh a stated \
+language level, not an inferred one. The same goes for anything else you \
+would be guessing at — an unstated requirement is not a gap.
+
 In `flags`, list short phrases for anything the candidate should know \
 before applying — for example "requires security clearance", "5+ yrs \
 Kubernetes", "on-site 3 days/week". Use an empty list if there is nothing \
@@ -94,10 +101,32 @@ def score_one(backend, row, profile: str) -> FitScore:
     return backend.complete(SYSTEM, build_prompt(row, profile), FitScore, max_tokens=2000)
 
 
-def run(config: Config, conn, limit: int | None = None) -> dict:
-    """Score every unscored job. Returns a small summary dict."""
+def run(
+    config: Config,
+    conn,
+    limit: int | None = None,
+    fingerprints: list[str] | None = None,
+    rescore: bool = False,
+) -> dict:
+    """Score unscored jobs, the ones named, or everything still live.
+
+    Naming jobs — or passing `rescore` — scores them wherever they are in the
+    lifecycle and leaves their status alone, so an approval survives it. Two
+    things need that: a job approved before it was ever scored has no other
+    way to get one, and every existing score goes stale the moment you edit
+    your profile, since the score is a function of it.
+    """
     profile = config.load_profile()
-    pending = db.unscored(conn, limit=limit)
+    keep_status = bool(fingerprints or rescore)
+
+    if rescore:
+        pending = db.rescorable(conn)
+        if limit:
+            pending = pending[:limit]
+    elif fingerprints:
+        pending = [row for row in (db.get(conn, fp) for fp in fingerprints) if row]
+    else:
+        pending = db.unscored(conn, limit=limit)
     if not pending:
         return {"scored": 0, "failed": 0, "total": 0}
 
@@ -114,7 +143,10 @@ def run(config: Config, conn, limit: int | None = None) -> dict:
             failed += 1
             continue
 
-        db.save_score(conn, row["fingerprint"], result.score, result.reason, result.flags)
+        db.save_score(
+            conn, row["fingerprint"], result.score, result.reason, result.flags,
+            set_status=not keep_status,
+        )
         scored += 1
         log.info("%3d  %s @ %s", result.score, row["title"], row["company"])
         # Commit per row: scoring costs money, don't lose it to a later crash.

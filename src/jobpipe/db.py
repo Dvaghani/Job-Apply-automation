@@ -141,13 +141,26 @@ def save_score(
     score: int,
     reason: str,
     flags: list[str] | None = None,
+    set_status: bool = True,
 ) -> None:
+    """Record a fit score.
+
+    `set_status=False` scores a job without moving it: rescoring one you have
+    already approved must not drop it back into the review queue and lose the
+    decision you made.
+    """
+    if set_status:
+        conn.execute(
+            """
+            UPDATE jobs SET score = ?, score_reason = ?, score_flags = ?, status = ?
+            WHERE fingerprint = ?
+            """,
+            (score, reason, json.dumps(flags or []), STATUS_SCORED, fingerprint),
+        )
+        return
     conn.execute(
-        """
-        UPDATE jobs SET score = ?, score_reason = ?, score_flags = ?, status = ?
-        WHERE fingerprint = ?
-        """,
-        (score, reason, json.dumps(flags or []), STATUS_SCORED, fingerprint),
+        "UPDATE jobs SET score = ?, score_reason = ?, score_flags = ? WHERE fingerprint = ?",
+        (score, reason, json.dumps(flags or []), fingerprint),
     )
 
 
@@ -203,6 +216,46 @@ def review_queue(conn: sqlite3.Connection, min_score: int = 0) -> list[sqlite3.R
             """
             SELECT * FROM jobs
             WHERE status = ? AND COALESCE(score, 0) >= ?
+            ORDER BY score DESC, first_seen DESC
+            """,
+            (STATUS_SCORED, min_score),
+        )
+    )
+
+
+def rescorable(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Everything still live in the pipeline, for scoring again.
+
+    Scored and approved jobs — the ones that survived the hard filters and
+    have not been decided against. Their scores are a function of your
+    profile, so editing the profile makes every one of them stale. Rejected
+    jobs are left alone: a filter rejection was never an LLM judgement, and
+    a rejection you made yourself is not for this to revisit.
+    """
+    return list(
+        conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE status IN (?, ?)
+            ORDER BY COALESCE(score, 0) DESC, first_seen DESC
+            """,
+            (STATUS_SCORED, STATUS_APPROVED),
+        )
+    )
+
+
+def below_threshold(conn: sqlite3.Connection, min_score: int = 0) -> list[sqlite3.Row]:
+    """Scored jobs the review queue hides because they missed `min_score`.
+
+    They are not rejected — nobody looked at them. Without a way to list
+    them they are invisible everywhere, which makes a threshold set slightly
+    too high indistinguishable from a pipeline that found nothing.
+    """
+    return list(
+        conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE status = ? AND COALESCE(score, 0) < ?
             ORDER BY score DESC, first_seen DESC
             """,
             (STATUS_SCORED, min_score),

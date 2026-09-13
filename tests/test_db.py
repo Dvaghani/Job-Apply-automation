@@ -75,3 +75,68 @@ def test_unscored_only_returns_new(conn):
     db.upsert_job(conn, b)
     db.set_status(conn, b.fingerprint(), STATUS_APPROVED)
     assert [r["title"] for r in db.unscored(conn)] == ["A"]
+
+
+def test_below_threshold_finds_what_the_queue_hides(conn):
+    """Scored-but-under-cut jobs are undecided, not rejected."""
+    for i, score in enumerate([90, 61, 60, 59, 5]):
+        job = make(source_id=str(i), title=f"Engineer {i}")
+        db.upsert_job(conn, job)
+        db.save_score(conn, job.fingerprint(), score, "r")
+
+    ready = db.review_queue(conn, min_score=60)
+    below = db.below_threshold(conn, min_score=60)
+    assert [r["score"] for r in ready] == [90, 61, 60]
+    assert [r["score"] for r in below] == [59, 5]
+
+
+def test_the_two_views_partition_the_scored_jobs(conn):
+    for i, score in enumerate([80, 10, 44, 99]):
+        job = make(source_id=str(i), title=f"Engineer {i}")
+        db.upsert_job(conn, job)
+        db.save_score(conn, job.fingerprint(), score, "r")
+    total = db.stats(conn)["scored"]
+    assert len(db.review_queue(conn, 60)) + len(db.below_threshold(conn, 60)) == total
+
+
+def test_below_threshold_counts_an_unscored_row_as_below(conn):
+    """COALESCE(score, 0): a null score must land somewhere, not vanish."""
+    job = make()
+    db.upsert_job(conn, job)
+    db.save_score(conn, job.fingerprint(), 0, "r")
+    conn.execute("UPDATE jobs SET score = NULL WHERE fingerprint = ?", (job.fingerprint(),))
+    assert len(db.below_threshold(conn, 60)) == 1
+
+
+def test_rescoring_can_leave_an_approval_alone(conn):
+    """A job approved before it was ever scored is the reason this exists."""
+    job = make()
+    db.upsert_job(conn, job)
+    db.set_status(conn, job.fingerprint(), STATUS_APPROVED)
+    db.save_score(conn, job.fingerprint(), 77, "good", set_status=False)
+    row = db.get(conn, job.fingerprint())
+    assert row["status"] == STATUS_APPROVED
+    assert row["score"] == 77
+
+
+def test_scoring_normally_still_moves_a_job_into_the_queue(conn):
+    job = make()
+    db.upsert_job(conn, job)
+    db.save_score(conn, job.fingerprint(), 77, "good")
+    assert db.get(conn, job.fingerprint())["status"] == "scored"
+
+
+def test_rescorable_covers_the_live_pipeline_only(conn):
+    """Rejected jobs are not revisited: a filter rejection was never an LLM
+    judgement, and a rejection you made yourself is not for this to undo."""
+    wanted = []
+    for i, status in enumerate(["scored", "approved", "rejected", "applied", "new"]):
+        job = make(source_id=str(i), title=f"Engineer {i}")
+        db.upsert_job(conn, job)
+        if status != "new":
+            db.set_status(conn, job.fingerprint(), status)
+        if status in ("scored", "approved"):
+            wanted.append(job.fingerprint())
+
+    got = {r["fingerprint"] for r in db.rescorable(conn)}
+    assert got == set(wanted)
