@@ -71,22 +71,51 @@ def numbers_in(text: str) -> set[float]:
     return values
 
 
-def claim_tokens(text: str) -> set[str]:
+# Languages whose orthography capitalises ordinary nouns, so that a capital
+# letter mid-sentence says nothing about whether a word is a proper noun.
+_NOUN_CAPITALISING = {"de"}
+
+
+def claim_tokens(text: str, language: str = "en") -> set[str]:
     """Technology/proper-noun-like tokens asserted by `text`.
 
-    Capitalization alone can't separate "Kubernetes" from "Built", so
-    position decides: a capitalized word *mid-sentence* is a proper noun,
-    while the first word of a sentence is capitalized by grammar and only
-    counts if its shape is independently claim-like (AWS, PostgreSQL, S3).
+    In English, capitalization alone can't separate "Kubernetes" from
+    "Built", so position decides: a capitalized word *mid-sentence* is a
+    proper noun, while the first word of a sentence is capitalized by grammar
+    and only counts if its shape is independently claim-like (AWS,
+    PostgreSQL, S3).
+
+    German capitalises *every* noun, so that positional rule marks
+    "Visualisierung" and "Testergebnissen" as asserted technologies and
+    buries the real findings under dozens of false ones. There, only shape
+    counts. That is a genuinely weaker vocabulary check — a fabricated
+    lowercase technology would slip through — but the number check, which
+    catches the inflated-metric case that actually matters, is unaffected.
     """
+    positional = language not in _NOUN_CAPITALISING
     found = set()
     for sentence in _SENTENCE.split(text or ""):
         for position, word in enumerate(_WORD.findall(sentence)):
             token = word.strip(".-")
             if len(token) < 2 or token.upper() in _IGNORE_TOKENS:
                 continue
-            if _STRONG_CLAIM.match(token) or (token[0].isupper() and position > 0):
+
+            if positional and token[0].isupper() and position > 0:
                 found.add(token)
+                continue
+            if _STRONG_CLAIM.match(token):
+                found.add(token)
+                continue
+
+            # German builds compounds: "HiL-Testergebnissen" hides a real
+            # technology inside an ordinary noun, and matching the whole
+            # token finds neither. Check the parts, so "HiL" is verified and
+            # "Testergebnissen" is correctly ignored.
+            if not positional and "-" in token:
+                for part in token.split("-"):
+                    if len(part) >= 2 and part.upper() not in _IGNORE_TOKENS:
+                        if _STRONG_CLAIM.match(part):
+                            found.add(part)
     return found
 
 
@@ -105,11 +134,13 @@ def check_numbers(source: str, tailored: str, where: str) -> list[Finding]:
     ]
 
 
-def check_vocabulary(corpus: str, tailored: str, where: str) -> list[Finding]:
+def check_vocabulary(
+    corpus: str, tailored: str, where: str, language: str = "en"
+) -> list[Finding]:
     """Any technology named in the rewrite must appear somewhere in the master."""
     haystack = (corpus or "").lower()
     invented = sorted(
-        t for t in claim_tokens(tailored) if t.lower() not in haystack
+        t for t in claim_tokens(tailored, language) if t.lower() not in haystack
     )
     if not invented:
         return []
@@ -126,7 +157,9 @@ def _fmt(value: float) -> str:
     return str(int(value)) if value.is_integer() else str(value)
 
 
-def check_tailoring(resume, tailoring, job_text: str = "") -> list[Finding]:
+def check_tailoring(
+    resume, tailoring, job_text: str = "", language: str = "en"
+) -> list[Finding]:
     """Verify a whole `Tailoring` against the master resume.
 
     Returns every problem found. An empty list means the output asserts
@@ -161,11 +194,11 @@ def check_tailoring(resume, tailoring, job_text: str = "") -> list[Finding]:
                 continue
             source = role.highlights[bullet.source_index]
             findings += check_numbers(source, bullet.text, where)
-            findings += check_vocabulary(master, bullet.text, where)
+            findings += check_vocabulary(master, bullet.text, where, language)
 
     # The summary and skills draw on the whole resume, not one bullet.
     findings += check_numbers(master, tailoring.summary, "summary")
-    findings += check_vocabulary(master, tailoring.summary, "summary")
+    findings += check_vocabulary(master, tailoring.summary, "summary", language)
 
     for skill in tailoring.selected_skills:
         if skill.lower() not in master.lower():
@@ -178,7 +211,7 @@ def check_tailoring(resume, tailoring, job_text: str = "") -> list[Finding]:
         # posting, so the posting counts as supporting context here.
         findings += check_numbers(master, tailoring.cover_letter, "cover letter")
         findings += check_vocabulary(
-            master + " " + job_text, tailoring.cover_letter, "cover letter"
+            master + " " + job_text, tailoring.cover_letter, "cover letter", language
         )
 
     return findings
