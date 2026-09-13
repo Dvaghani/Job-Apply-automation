@@ -382,10 +382,18 @@ def gather_attachments(
             attachments["resume"] = pdf
             break
 
-    for sfx in suffixes:
-        cover = output_dir / f"cover-letter{sfx}.md"
-        if cover.exists():
-            attachments["cover_letter"] = cover
+    # PDF first: an upload field takes a document, not Markdown. The .md is
+    # a last resort so a folder generated before this existed still attaches
+    # something rather than nothing.
+    for extension in ("pdf", "md"):
+        found = None
+        for sfx in suffixes:
+            candidate = output_dir / f"cover-letter{sfx}.{extension}"
+            if candidate.exists():
+                found = candidate
+                break
+        if found is not None:
+            attachments["cover_letter"] = found
             break
 
     return attachments

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from . import llm
 from .llm import LLMError
-from .resume import Resume, render_html, render_markdown
+from .resume import Resume, render_cover_html, render_html, render_markdown
 from .verify import check_tailoring
 
 log = logging.getLogger(__name__)
@@ -51,7 +51,14 @@ accurate.
 
 The cover letter, if asked for, is at most 200 words: why this company, what \
 you would do in the role, grounded only in facts from the master resume. No \
-throat-clearing, no "I am writing to apply", no restating the resume."""
+throat-clearing, no "I am writing to apply", no restating the resume.
+
+Write it as a complete letter, because it is sent as one: open with a \
+salutation, break it into paragraphs, and close with a sign-off and the \
+candidate's name. Follow the conventions of the output language — a German \
+Anschreiben opens "Sehr geehrte Damen und Herren," and closes "Mit \
+freundlichen Grüßen". Do not write a subject line, a date or an address \
+block; those are laid out around your text."""
 
 PROMPT = """<master_resume>
 {resume}
@@ -123,6 +130,14 @@ def _resume_for_prompt(resume: Resume) -> str:
 
 
 LANGUAGE_INSTRUCTION = {
+    # English is stated as explicitly as German. Left unsaid, the model takes
+    # its cue from the posting and writes a German letter for a German job —
+    # which is a reasonable guess, and not what was asked for.
+    "en": (
+        "\n\nWrite every piece of output — summary, bullets and cover letter — "
+        "in English, even when the posting itself is written in another "
+        "language."
+    ),
     "de": (
         "\n\nWrite every piece of output — summary, bullets and cover letter — "
         "in German, in the register a German Lebenslauf and Anschreiben use. "
@@ -148,7 +163,7 @@ def build_prompt(
         description=description or "(no description provided)",
         cover=" Also write the cover letter." if cover_letter else
               " Leave cover_letter empty.",
-        language=LANGUAGE_INSTRUCTION.get(language, ""),
+        language=LANGUAGE_INSTRUCTION.get(language, LANGUAGE_INSTRUCTION["en"]),
     )
 
 
@@ -225,9 +240,24 @@ def write_outputs(
         written.append(pdf)
 
     if tailoring.cover_letter.strip():
+        body = tailoring.cover_letter.strip()
+
+        # Markdown is the editable source. It is not what gets uploaded:
+        # an ATS file field rejects .md outright.
         cover = directory / f"cover-letter{sfx}.md"
-        cover.write_text(tailoring.cover_letter.strip() + "\n", encoding="utf-8")
+        cover.write_text(body + "\n", encoding="utf-8")
         written.append(cover)
+
+        cover_html = directory / f"cover-letter{sfx}.html"
+        cover_html.write_text(
+            render_cover_html(resume, body, row["company"], row["title"], language),
+            encoding="utf-8",
+        )
+        written.append(cover_html)
+
+        cover_pdf = write_pdf(cover_html, directory / f"cover-letter{sfx}.pdf")
+        if cover_pdf is not None:
+            written.append(cover_pdf)
 
     notes = [f"# {row['title']} — {row['company']}", "", row["url"], ""]
     if tailoring.keywords_matched:

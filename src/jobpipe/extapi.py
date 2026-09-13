@@ -54,7 +54,8 @@ SERVABLE = {
     for suffix in ("", ".de")
     for stem, ext in [
         ("resume", "pdf"), ("resume", "html"), ("resume", "md"),
-        ("cover-letter", "md"), ("NOTES", "md"),
+        ("cover-letter", "pdf"), ("cover-letter", "html"), ("cover-letter", "md"),
+        ("NOTES", "md"),
     ]
 }
 

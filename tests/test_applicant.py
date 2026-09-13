@@ -200,3 +200,42 @@ def test_choose_option_when_answer_is_longer_than_option():
 def test_choose_option_returns_none_when_nothing_fits():
     assert choose_option(OPTIONS, "Maybe") is None
     assert choose_option(OPTIONS, "") is None
+
+
+# --- which cover letter gets attached -------------------------------------
+
+def test_the_pdf_cover_letter_is_preferred_over_markdown(tmp_path):
+    """An upload field takes a document; .md is rejected outright."""
+    (tmp_path / "resume.pdf").write_bytes(b"%PDF")
+    (tmp_path / "cover-letter.md").write_text("x", encoding="utf-8")
+    (tmp_path / "cover-letter.pdf").write_bytes(b"%PDF")
+    got = autofill.gather_attachments(tmp_path)
+    assert got["cover_letter"].name == "cover-letter.pdf"
+
+
+def test_markdown_is_still_attached_when_there_is_no_pdf(tmp_path):
+    """A folder generated before the PDF existed should attach something."""
+    (tmp_path / "cover-letter.md").write_text("x", encoding="utf-8")
+    got = autofill.gather_attachments(tmp_path)
+    assert got["cover_letter"].name == "cover-letter.md"
+
+
+def test_the_german_cover_letter_is_picked_for_a_german_application(tmp_path):
+    (tmp_path / "cover-letter.pdf").write_bytes(b"%PDF")
+    (tmp_path / "cover-letter.de.pdf").write_bytes(b"%PDF")
+    got = autofill.gather_attachments(tmp_path, language="de")
+    assert got["cover_letter"].name == "cover-letter.de.pdf"
+
+
+def test_english_is_used_when_the_german_letter_was_never_generated(tmp_path):
+    (tmp_path / "cover-letter.pdf").write_bytes(b"%PDF")
+    got = autofill.gather_attachments(tmp_path, language="de")
+    assert got["cover_letter"].name == "cover-letter.pdf"
+
+
+def test_a_german_pdf_beats_an_english_markdown(tmp_path):
+    """Format decides before language: the .md would be rejected either way."""
+    (tmp_path / "cover-letter.md").write_text("x", encoding="utf-8")
+    (tmp_path / "cover-letter.de.pdf").write_bytes(b"%PDF")
+    got = autofill.gather_attachments(tmp_path, language="de")
+    assert got["cover_letter"].name == "cover-letter.de.pdf"

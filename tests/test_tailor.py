@@ -106,7 +106,9 @@ def test_write_outputs_writes_expected_files(tmp_path, master):
     written = tailor.write_outputs(tmp_path / "app", master, T(cover="Hello."), row(), [])
     names = {p.name for p in written}
     assert names == {
-        "resume.md", "resume.html", "resume.pdf", "cover-letter.md", "NOTES.md",
+        "resume.md", "resume.html", "resume.pdf",
+        "cover-letter.md", "cover-letter.html", "cover-letter.pdf",
+        "NOTES.md",
     }
 
 
@@ -145,7 +147,8 @@ def test_german_output_gets_its_own_filenames(tmp_path, master):
     names = {p.name for p in written}
     assert names == {
         "resume.de.md", "resume.de.html", "resume.de.pdf",
-        "cover-letter.de.md", "NOTES.de.md",
+        "cover-letter.de.md", "cover-letter.de.html", "cover-letter.de.pdf",
+        "NOTES.de.md",
     }
 
 
@@ -164,9 +167,18 @@ def test_german_prompt_asks_for_german(master):
     assert "Lebenslauf" in prompt
 
 
-def test_english_prompt_says_nothing_about_language(master):
+def test_english_prompt_says_english_explicitly(master):
+    """Left unsaid, the model follows the posting and writes German for a
+    German job. Naming the language is what stops that."""
     prompt = tailor.build_prompt(master, row(), cover_letter=True, language="en")
+    assert "in English" in prompt
+    assert "even when the posting" in prompt
     assert "in German" not in prompt
+
+
+def test_an_unknown_language_falls_back_to_english(master):
+    prompt = tailor.build_prompt(master, row(), cover_letter=True, language="xx")
+    assert "in English" in prompt
 
 
 def test_suffix_for_language():
@@ -249,3 +261,26 @@ def test_untailored_approved_excludes_already_tailored(tmp_path):
         db.set_status(conn, job.fingerprint(), STATUS_APPROVED)
     db.mark_tailored(conn, a.fingerprint(), "somewhere")
     assert [r["title"] for r in db.untailored_approved(conn)] == ["Eng B"]
+
+
+def test_the_cover_letter_is_uploadable_not_just_readable(tmp_path, master):
+    """An ATS file field rejects .md, so the letter needs a document too."""
+    letter = "Dear team,\n\nHello."
+    tailor.write_outputs(tmp_path / "app", master, T(cover=letter), row(), [])
+    assert (tmp_path / "app" / "cover-letter.pdf").is_file()
+
+
+def test_the_cover_letter_html_carries_a_letterhead(tmp_path, master):
+    letter = "Dear team,\n\nHello."
+    tailor.write_outputs(tmp_path / "app", master, T(cover=letter), row(), [])
+    html = (tmp_path / "app" / "cover-letter.html").read_text(encoding="utf-8")
+    assert "Ada Lovelace" in html
+    assert "Globex Corp." in html                 # addressed to the employer
+    assert "Application for Staff Engineer" in html
+    assert "<p>Dear team,</p>" in html            # body kept verbatim
+
+
+def test_the_prompt_asks_for_a_complete_letter(master):
+    prompt = tailor.SYSTEM
+    assert "salutation" in prompt
+    assert "sign-off" in prompt

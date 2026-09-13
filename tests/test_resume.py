@@ -142,7 +142,11 @@ def test_html_renders_bullets_as_list(master):
 # cost the thesis — often the most relevant thing on a perception posting.
 
 MASTER_WITH_EXTRAS = {
-    "basics": {"name": "Ada Lovelace"},
+    "basics": {
+        "name": "Ada Lovelace",
+        "email": "ada@example.com",
+        "location": {"city": "Chemnitz", "region": "Saxony"},
+    },
     "work": [{
         "name": "Acme",
         "position": "Engineer",
@@ -227,3 +231,70 @@ def test_a_master_without_the_extra_sections_renders_without_empty_headings(tmp_
     ))
     assert "## Projects" not in out
     assert "## Languages" not in out
+
+
+# --- the cover letter as a document ---------------------------------------
+#
+# Markdown is the editable source; an ATS upload field rejects it. The letter
+# needs a letterhead around the model's prose so the PDF is a real letter.
+
+def _letter(tmp_path, text, language="en", today=None):
+    import datetime
+
+    path = tmp_path / "m.json"
+    path.write_text(json.dumps(MASTER_WITH_EXTRAS), encoding="utf-8")
+    master = resume.load(path)
+    return resume.render_cover_html(
+        master, text, "Globex GmbH", "Firmware Engineer", language,
+        today or datetime.date(2026, 9, 13),
+    )
+
+
+def test_the_letter_carries_sender_recipient_and_subject(tmp_path):
+    html = _letter(tmp_path, "Dear team,\n\nHello.")
+    assert "Ada Lovelace" in html
+    assert "Globex GmbH" in html
+    assert "Application for Firmware Engineer" in html
+
+
+def test_paragraphs_become_paragraphs(tmp_path):
+    html = _letter(tmp_path, "One.\n\nTwo.\n\nThree.")
+    assert html.count("<p>") == 3
+
+
+def test_a_single_newline_stays_inside_its_paragraph(tmp_path):
+    """A sign-off is two lines of one block, not two paragraphs."""
+    html = _letter(tmp_path, "Regards,\nAda")
+    assert "<p>Regards,<br>Ada</p>" in html
+
+
+def test_nothing_is_added_around_the_body(tmp_path):
+    """The salutation and sign-off come from the model — adding our own
+    would duplicate whatever it already wrote."""
+    html = _letter(tmp_path, "Sehr geehrte Damen und Herren,\n\nText.", "de")
+    assert html.count("Sehr geehrte") == 1
+    assert "Dear" not in html
+    assert "Mit freundlichen" not in html
+
+
+def test_the_german_letter_uses_german_conventions(tmp_path):
+    html = _letter(tmp_path, "Text.", "de")
+    assert "Bewerbung als Firmware Engineer" in html
+    assert "13. September 2026" in html
+    assert 'lang="de"' in html
+
+
+def test_the_english_letter_uses_english_conventions(tmp_path):
+    html = _letter(tmp_path, "Text.", "en")
+    assert "13 September 2026" in html
+    assert "Application for" in html
+
+
+def test_a_german_letter_leads_with_the_place_of_writing(tmp_path):
+    assert "Chemnitz, 13. September 2026" in _letter(tmp_path, "Text.", "de")
+
+
+def test_html_in_the_letter_text_is_escaped(tmp_path):
+    html = _letter(tmp_path, "I use <script>alert(1)</script> daily.")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html

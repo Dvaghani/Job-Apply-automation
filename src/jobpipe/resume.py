@@ -206,7 +206,7 @@ def render_markdown(resume: Resume, tailored, language: str = "en") -> str:
             lines += ["", f"### {project.get('name', '')}"]
             if project.get("description"):
                 lines += [f"*{project['description']}*", ""]
-            lines += [f"- {h}" for h in project.get("highlights") or []]
+            lines += [f"- {item}" for item in project.get("highlights") or []]
 
     if tailored.selected_skills:
         lines += ["", "## " + h["skills"], "", ", ".join(tailored.selected_skills)]
@@ -326,3 +326,95 @@ def _inline(text: str) -> str:
     out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", out)
     out = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"<em>\1</em>", out)
     return out
+
+
+# --- cover letter ---------------------------------------------------------
+#
+# Application forms take a PDF. A Markdown file is rejected outright by most
+# ATS upload fields, so the letter needs the same treatment as the resume:
+# rendered to something an employer can actually open.
+
+MONTHS = {
+    "en": ["January", "February", "March", "April", "May", "June", "July",
+           "August", "September", "October", "November", "December"],
+    "de": ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli",
+           "August", "September", "Oktober", "November", "Dezember"],
+}
+
+SUBJECT = {
+    "en": "Application for {title}",
+    "de": "Bewerbung als {title}",
+}
+
+LETTER_SHELL = """<!doctype html>
+<html lang="{lang}"><head><meta charset="utf-8">
+<title>{name} — {subject}</title>
+<style>
+  body {{ max-width: 7.5in; margin: 0 auto; padding: 0.8in 0.7in;
+         font: 11pt/1.6 Georgia, "Times New Roman", serif; color: #111; }}
+  .sender {{ font-size: 10pt; color: #444; margin-bottom: 28px; }}
+  .sender b {{ display: block; font-size: 12pt; color: #111; margin-bottom: 2px; }}
+  .to {{ margin-bottom: 18px; }}
+  .date {{ margin-bottom: 26px; }}
+  .subject {{ font-weight: bold; margin-bottom: 22px; }}
+  p {{ margin: 0 0 12px; text-align: justify; }}
+  @media print {{ body {{ padding: 0.6in; }} @page {{ margin: 0.6in; }} }}
+</style></head><body>
+<div class="sender"><b>{name}</b>{contact}</div>
+<div class="to">{company}</div>
+<div class="date">{date}</div>
+<div class="subject">{subject}</div>
+{body}
+</body></html>
+"""
+
+
+def letter_date(language: str = "en", city: str = "", today=None) -> str:
+    """Today's date as a letter carries it.
+
+    German letters conventionally lead with the place of writing; English
+    ones do not.
+    """
+    import datetime
+
+    day = today or datetime.date.today()
+    month = MONTHS.get(language, MONTHS["en"])[day.month - 1]
+    if language == "de":
+        stamp = f"{day.day}. {month} {day.year}"
+        return f"{city}, {stamp}" if city else stamp
+    return f"{day.day} {month} {day.year}"
+
+
+def render_cover_html(
+    resume: Resume, text: str, company: str = "", job_title: str = "",
+    language: str = "en", today=None,
+) -> str:
+    """Lay the cover letter out as a letter.
+
+    The body is emitted verbatim — the salutation and sign-off come from the
+    model, so nothing is added around it that could end up duplicated.
+    """
+    basics = resume.basics
+    location = basics.get("location") or {}
+    city = location.get("city", "")
+
+    bits = [basics.get("email"), basics.get("phone"), city]
+    contact = " · ".join(_escape(b) for b in bits if b)
+
+    paragraphs = [
+        f"<p>{_escape(block.strip()).replace(chr(10), '<br>')}</p>"
+        for block in (text or "").split("\n\n")
+        if block.strip()
+    ]
+
+    return LETTER_SHELL.format(
+        lang=language,
+        name=_escape(resume.name),
+        contact=contact,
+        company=_escape(company),
+        date=_escape(letter_date(language, city, today)),
+        subject=_escape(
+            SUBJECT.get(language, SUBJECT["en"]).format(title=job_title)
+        ),
+        body="\n".join(paragraphs),
+    )
