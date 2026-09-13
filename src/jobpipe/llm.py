@@ -139,7 +139,17 @@ class ClaudeCliBackend:
 
         try:
             completed = subprocess.run(
-                command, capture_output=True, text=True, timeout=self.timeout
+                command,
+                capture_output=True,
+                text=True,
+                # The CLI emits UTF-8. Without this, `text=True` decodes with
+                # the system locale — cp1252 on Windows — and every em dash,
+                # ü, ö and ß in a tailored resume or a German posting's score
+                # comes back mangled. The files are written as UTF-8, so the
+                # corruption happens here, before anything is saved.
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.timeout,
             )
         except subprocess.TimeoutExpired as exc:
             raise LLMError(f"claude CLI timed out after {self.timeout}s") from exc
