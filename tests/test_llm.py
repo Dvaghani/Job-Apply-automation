@@ -168,3 +168,28 @@ def test_build_accepts_aliases(monkeypatch):
 def test_build_rejects_an_unknown_backend():
     with pytest.raises(LLMError, match="unknown backend"):
         llm.build(Config(backend="gpt"))
+
+
+def test_cli_reports_a_setup_error_without_a_traceback(monkeypatch, tmp_path, capsys):
+    """A missing CLI is the likeliest first-run failure — it must read as
+    guidance, not a stack trace."""
+    from jobpipe.cli import main
+    from jobpipe import db
+    from jobpipe.models import Job
+
+    (tmp_path / "profile.md").write_text("Backend engineer.")
+    (tmp_path / "config.yaml").write_text(
+        f"backend: claude-cli\ndb_path: {tmp_path / 'j.db'}\n"
+        f"profile_path: {tmp_path / 'profile.md'}\n"
+    )
+    conn = db.connect(tmp_path / "j.db")
+    db.upsert_job(conn, Job(source="s", source_id="1", company="C", title="T", url="u"))
+    conn.commit()
+
+    monkeypatch.setattr(llm.shutil, "which", lambda name: None)
+    code = main(["-c", str(tmp_path / "config.yaml"), "score"])
+
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "Claude Code" in err

@@ -10,6 +10,7 @@ from . import applicant as applicant_mod
 from . import autofill, db, ingest, score, tailor, web
 from .config import ConfigError, load_config
 from .applicant import ApplicantError
+from .llm import LLMError
 from .resume import ResumeError
 
 
@@ -199,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         return COMMANDS[args.command](config, args)
-    except (ConfigError, ResumeError, ApplicantError) as exc:
+    except (ConfigError, ResumeError, ApplicantError, LLMError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
