@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from jobpipe import autofill
 from jobpipe.applicant import Applicant
 from jobpipe.autofill import fill_page
 
@@ -38,6 +39,17 @@ def page(page_factory):
     page.goto(FIXTURE.resolve().as_uri())
     yield page
     page.close()
+
+
+@pytest.fixture(autouse=True)
+def no_parse_wait(monkeypatch):
+    """Skip the CV-parse settle wait.
+
+    It is 2.5 real seconds on every fill, which is a minute across this
+    module. Nothing here depends on it: the fixture's prefilled value is a
+    static attribute, not the product of an async parse.
+    """
+    monkeypatch.setattr(autofill, "PARSE_SETTLE_MS", 0)
 
 
 @pytest.fixture
@@ -116,6 +128,72 @@ def test_attaches_the_resume(page, applicant, resume):
 
 
 # --- what it declines to touch -------------------------------------------
+
+# --- portals that parse your CV ------------------------------------------
+
+def test_the_cv_is_uploaded_before_anything_is_typed(page, applicant, resume):
+    """A portal that prefills from the CV must not land on top of our values."""
+    actions = fill_page(page, applicant, resume)
+    keys = [a.key for a in actions]
+    assert keys[0] == "resume", "the attachment must come first"
+
+
+def test_our_value_wins_over_a_prefilled_one(page, applicant, resume):
+    fill_page(page, applicant, resume)
+    assert values(page)["ph"] == "+1 555 0100"
+
+
+def test_replacing_a_prefilled_value_is_reported(page, applicant, resume):
+    """A portal disagreeing with you about your own phone number is worth seeing."""
+    actions = fill_page(page, applicant, resume)
+    phone = next(a for a in actions if a.key == "phone")
+    assert "replaced" in phone.detail
+    assert "+49 000 WRONG" in phone.detail
+
+
+def test_an_untouched_field_is_not_reported_as_replaced(page, applicant, resume):
+    actions = fill_page(page, applicant, resume)
+    first = next(a for a in actions if a.key == "first_name")
+    assert "replaced" not in first.detail
+
+
+def test_a_password_is_never_filled(page, applicant, resume):
+    """Employer portals demand an account; signing up is the human's job."""
+    fill_page(page, applicant, resume)
+    got = values(page)
+    assert got["pw"] == ""
+    assert got["pw2"] == ""
+    assert got["kw"] == ""          # a plain text input labelled "Kennwort"
+
+
+def test_a_password_is_reported_so_you_know_why_the_form_is_empty(page, applicant, resume):
+    actions = fill_page(page, applicant, resume)
+    credentials = [a for a in actions if a.key == "password"]
+    assert len(credentials) == 3
+    assert all(a.action == "skipped" for a in credentials)
+
+
+def test_a_password_is_refused_even_with_an_answer_for_it(page, resume):
+    """The answer bank is substring-matched, so it must not be consulted."""
+    reckless = Applicant(
+        fields={"first_name": "Ada"},
+        answers={"password": "hunter2", "kennwort": "hunter2"},
+        fill_eeo=False,
+    )
+    fill_page(page, reckless, resume)
+    got = values(page)
+    assert "hunter2" not in (got["pw"], got["pw2"], got["kw"])
+
+
+def test_opting_into_self_identification_does_not_opt_into_passwords(page, resume):
+    opted_in = Applicant(
+        fields={"veteran_status": "I am not a protected veteran"},
+        answers={"password": "hunter2"},
+        fill_eeo=True,
+    )
+    fill_page(page, opted_in, resume)
+    assert values(page)["pw"] == ""
+
 
 def test_self_identification_is_left_blank(page, applicant, resume):
     actions = fill_page(page, applicant, resume)

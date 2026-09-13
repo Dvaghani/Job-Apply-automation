@@ -2,7 +2,8 @@ import pytest
 import yaml
 
 from jobpipe.applicant import Applicant, ApplicantError, load
-from jobpipe.autofill import apply_form_url, choose_option
+from jobpipe import autofill
+from jobpipe.autofill import adzuna_job_id, apply_form_url, choose_option
 
 
 def test_full_name_is_derived_when_absent():
@@ -79,6 +80,98 @@ def test_apply_form_url(posting, expected):
 
 def test_apply_form_url_drops_query_before_deriving():
     assert apply_form_url("https://jobs.lever.co/acme/abc?src=x").endswith("/abc/apply")
+
+
+# --- Adzuna listings ------------------------------------------------------
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://www.adzuna.de/details/5817935733?utm_medium=api", "5817935733"),
+    ("https://adzuna.de/details/123", "123"),
+    ("https://www.adzuna.co.uk/details/99", "99"),
+    ("https://boards.greenhouse.io/acme/jobs/4567", None),
+    ("https://example.com/adzuna.de/details/5", None),   # not the host
+    ("", None),
+])
+def test_adzuna_job_id(url, expected):
+    assert adzuna_job_id(url) == expected
+
+
+def test_adzuna_url_is_left_alone_by_the_offline_derivation():
+    """Resolving it needs a browser; apply_form_url must not pretend to."""
+    url = "https://www.adzuna.de/details/5817935733?utm_medium=api"
+    assert apply_form_url(url) == url
+
+
+# --- filling on demand ----------------------------------------------------
+#
+# The browser stays open so you can get past a login or a wizard yourself
+# and then ask for a fill. No browser needed to test the loop itself.
+
+class _Page:
+    def __init__(self, url="https://employer.example/step2"):
+        self.url = url
+
+
+def _hold_with(monkeypatch, replies):
+    """Drive _hold with a scripted set of answers; count the fills."""
+    filled = []
+    monkeypatch.setattr(
+        autofill, "fill_page", lambda page, a, att: filled.append(page.url) or []
+    )
+    answers = iter(replies)
+
+    def fake_input(*_args):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    autofill._hold(_Page(), None, {}, [])
+    return filled
+
+
+def test_hold_fills_the_current_page_on_request(monkeypatch):
+    assert len(_hold_with(monkeypatch, ["fill", "fill", ""])) == 2
+
+
+def test_hold_closes_on_a_bare_enter(monkeypatch):
+    assert _hold_with(monkeypatch, [""]) == []
+
+
+@pytest.mark.parametrize("word", ["fill", "FILL", " f ", "refill"])
+def test_hold_accepts_the_obvious_spellings(monkeypatch, word):
+    assert len(_hold_with(monkeypatch, [word, ""])) == 1
+
+
+@pytest.mark.parametrize("word", ["done", "close", "q", "quit", "exit"])
+def test_hold_closes_on_any_of_the_obvious_words(monkeypatch, word):
+    assert _hold_with(monkeypatch, [word]) == []
+
+
+def test_hold_ignores_an_unknown_command_rather_than_filling(monkeypatch):
+    assert _hold_with(monkeypatch, ["submit", "yes please", ""]) == []
+
+
+def test_hold_exits_when_there_is_no_terminal(monkeypatch):
+    """Run without stdin and it must close, not spin on EOFError."""
+    assert _hold_with(monkeypatch, []) == []
+
+
+# --- reporting ------------------------------------------------------------
+
+def test_summary_says_why_an_empty_form_was_empty():
+    actions = [autofill.FieldAction("Password *", "password", "skipped", "yours")]
+    assert "wants an account" in autofill.summarize(actions, "https://x.example")
+
+
+def test_summary_of_an_ordinary_form_does_not_mention_accounts():
+    actions = [autofill.FieldAction("First Name", "first_name", "filled", "Ada")]
+    assert "wants an account" not in autofill.summarize(actions, "https://x.example")
+
+
+def test_summary_reports_a_page_with_no_fields_at_all():
+    assert "no form fields" in autofill.summarize([], "https://x.example")
 
 
 # --- dropdown option matching --------------------------------------------

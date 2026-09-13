@@ -16,7 +16,9 @@
   <input id="em" name="q_8812" type="email" aria-label="Email Address">
 
   <!-- placeholder only -->
-  <input id="ph" name="q_4471" type="tel" placeholder="Enter your phone number">
+  <!-- Arrives non-empty, as a portal's CV parser leaves it. -->
+  <input id="ph" name="q_4471" type="tel" placeholder="Enter your phone number"
+         value="+49 000 WRONG">
 
   <!-- label wrapping the input -->
   <label>LinkedIn Profile <input id="li" name="urls[LinkedIn]" type="url"></label>
@@ -66,6 +68,15 @@
     <option value="">Select...</option>
     <option value="n">I am not a protected veteran</option>
   </select>
+
+  <!-- Account creation, as plenty of employer portals demand up front.
+       Detected and reported, never filled. -->
+  <label for="pw">Password *</label>
+  <input id="pw" type="password" name="password">
+  <label for="pw2">Confirm password</label>
+  <input id="pw2" type="password" name="password_confirm">
+  <label for="kw">Kennwort</label>
+  <input id="kw" type="text" name="kennwort">
 
   <!-- Must be ignored entirely -->
   <input type="hidden" name="csrf" value="tok">

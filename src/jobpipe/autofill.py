@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from .applicant import Applicant
-from .fieldmap import classify, is_eeo
+from .fieldmap import classify, is_credential, is_eeo
 
 log = logging.getLogger(__name__)
 
@@ -24,67 +25,21 @@ log = logging.getLogger(__name__)
 # submit/button/reset/image/hidden types.
 FIELD_SELECTOR = "input, select, textarea"
 
-# Runs in the page. Tags each field with a stable id and reports the
-# metadata needed to classify it.
-EXTRACT_JS = """
-() => {
-  const SKIP = new Set(['hidden', 'submit', 'button', 'reset', 'image']);
-  const text = (el) => (el ? (el.innerText || el.textContent || '').trim() : '');
-  const out = [];
-  let index = 0;
+# The extraction script, shared verbatim with the Chrome extension. Keeping
+# one copy is the point: the extension classifies fields by sending them to
+# this same code, so both must see the page the same way.
+EXTRACT_PATH = Path(__file__).parent / "extension" / "extract.js"
 
-  document.querySelectorAll('input, select, textarea').forEach((el) => {
-    if (el.tagName === 'INPUT' && SKIP.has((el.type || '').toLowerCase())) return;
-    if (el.disabled) return;
-    if (el.offsetParent === null && el.type !== 'file') return;  // not visible
 
-    let label = '';
-    if (el.id) {
-      const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
-      label = text(l);
-    }
-    if (!label) label = text(el.closest('label'));
-    if (!label && el.getAttribute('aria-labelledby')) {
-      label = el.getAttribute('aria-labelledby').split(/\\s+/)
-        .map((id) => text(document.getElementById(id))).join(' ').trim();
-    }
-    if (!label) {
-      const fs = el.closest('fieldset');
-      if (fs) label = text(fs.querySelector('legend'));
-    }
-    if (!label) {
-      // Common ATS shape: a div wrapper whose first text node is the label.
-      const parent = el.parentElement;
-      if (parent) {
-        const own = Array.from(parent.childNodes)
-          .filter((n) => n.nodeType === 3)
-          .map((n) => n.textContent.trim())
-          .filter(Boolean);
-        if (own.length) label = own[0];
-      }
-    }
+def extract_source() -> str:
+    return EXTRACT_PATH.read_text(encoding="utf-8")
 
-    const id = 'jp-' + (index++);
-    el.setAttribute('data-jobpipe-id', id);
 
-    out.push({
-      id,
-      tag: el.tagName.toLowerCase(),
-      type: (el.type || '').toLowerCase(),
-      name: el.name || '',
-      label: label.replace(/\\s+/g, ' ').slice(0, 200),
-      placeholder: el.placeholder || '',
-      ariaLabel: el.getAttribute('aria-label') || '',
-      required: !!el.required,
-      value: el.value || '',
-      options: el.tagName === 'SELECT'
-        ? Array.from(el.options).map((o) => ({ text: o.text.trim(), value: o.value }))
-        : [],
-    });
-  });
-  return out;
-}
-"""
+def extract_fields(page) -> list[dict]:
+    """Every fillable field on the page, as the extension also sees them."""
+    return page.evaluate(
+        "(() => {" + extract_source() + "; return jobpipeExtractFields(); })()"
+    )
 
 
 def launch_chromium(playwright, headless: bool):
@@ -129,6 +84,79 @@ def apply_form_url(url: str) -> str:
     return url
 
 
+# Adzuna stores a link to its own listing, not to the employer.
+ADZUNA_DETAIL = re.compile(r"https?://(?:www\.)?adzuna\.[a-z.]+/details/(\d+)")
+
+# How long to wait for Adzuna's client-side hop off its own domain.
+LAND_TIMEOUT_MS = 15_000
+
+# How long to let a portal parse an uploaded CV and prefill the form from it
+# before we go over the top with your own values.
+PARSE_SETTLE_MS = 2_500
+
+
+def adzuna_job_id(url: str) -> str | None:
+    """The Adzuna listing id in a posting URL, if it is one."""
+    match = ADZUNA_DETAIL.match(url or "")
+    return match.group(1) if match else None
+
+
+def resolve_posting(page, url: str) -> tuple[str, str | None]:
+    """Navigate to the employer's own page, through an aggregator if needed.
+
+    Adzuna's API hands back a link to an adzuna.de listing rather than to the
+    employer, so opening it lands you on Adzuna with no form to fill. The
+    employer link on that listing carries a short-lived signed token, which
+    means it cannot be derived offline — it has to be read off the page, and
+    read in a real browser, because Adzuna answers 403 to anything else.
+
+    Still navigation by URL: the href is read from the DOM and handed to
+    goto(). No button is clicked here either.
+
+    Adzuna serves that hop a bot check, which a headless browser fails — so
+    this works under `apply` as it normally runs, and not under `--headless`.
+    Where it lands may itself be another aggregator (XING, StepStone) rather
+    than the employer's form, which is the case `fill` on demand exists for.
+
+    Returns the URL actually landed on, and a note when it went wrong.
+    """
+    page.goto(url, wait_until="domcontentloaded")
+
+    job_id = adzuna_job_id(url)
+    if job_id is None:
+        return page.url, None
+
+    link = page.locator(f'a[href*="/land/ad/{job_id}"]').first
+    try:
+        if link.count() == 0:
+            return page.url, "no employer link on the Adzuna listing — open it yourself"
+        href = link.get_attribute("href")
+    except Exception as exc:
+        return page.url, f"could not read the Adzuna link: {str(exc)[:60]}"
+
+    if not href:
+        return page.url, "the Adzuna employer link was empty"
+
+    log.info("following Adzuna listing to the employer")
+    try:
+        page.goto(href, wait_until="domcontentloaded")
+    except Exception as exc:
+        return page.url, f"the employer link did not load: {str(exc)[:60]}"
+
+    # That last hop is client-side, so domcontentloaded fires while still on
+    # Adzuna. Without this wait the fill runs against the interstitial.
+    try:
+        page.wait_for_url(
+            lambda current: "adzuna." not in (current or ""), timeout=LAND_TIMEOUT_MS
+        )
+    except Exception:
+        return page.url, (
+            "the Adzuna redirect did not complete — click through yourself, "
+            "then ask for a fill"
+        )
+    return page.url, None
+
+
 def choose_option(options: list[dict], value: str) -> str | None:
     """Pick the dropdown option matching `value`, or None."""
     wanted = (value or "").strip().lower()
@@ -163,80 +191,157 @@ def resolve_value(field: dict, key: str | None, applicant: Applicant) -> str | N
 
 
 def fill_page(page, applicant: Applicant, attachments: dict[str, Path]) -> list[FieldAction]:
-    """Classify and fill every field on `page`. Returns what was done."""
-    fields = page.evaluate(EXTRACT_JS)
+    """Classify and fill every field on `page`. Returns what was done.
+
+    Attachments go first. Plenty of portals parse an uploaded CV and prefill
+    the form from what they find in it, and that parse is asynchronous — so
+    uploading last means the employer's guesses land on top of the values you
+    actually typed into `applicant.yaml`. Uploading first inverts it: let the
+    parser have its go, then correct it.
+    """
+    fields = extract_fields(page)
+    files = [f for f in fields if f["type"] == "file"]
+    actions = _fill_fields(page, files, applicant, attachments)
+
+    if files and attachments:
+        page.wait_for_timeout(PARSE_SETTLE_MS)
+        # Re-read: a CV parse rewrites values, and stale ones would make the
+        # report claim we replaced something that is no longer there.
+        fields = extract_fields(page)
+
+    rest = [f for f in fields if f["type"] != "file"]
+    return actions + _fill_fields(page, rest, applicant, attachments)
+
+
+@dataclass
+class FieldPlan:
+    """What to do with one field, decided without touching a browser.
+
+    Splitting the decision from the doing is what lets the Chrome extension
+    reuse this policy instead of reimplementing it in JavaScript. The
+    credential refusal especially: two implementations of that agree right up
+    until someone edits one of them.
+    """
+
+    id: str
+    label: str
+    key: str | None
+    action: str        # "filled" | "skipped" | "unmatched"
+    how: str = "none"  # "text" | "select" | "check" | "radio" | "file"
+    value: str = ""    # text to type, option value, or attachment kind
+    detail: str = ""
+
+    def to_action(self) -> FieldAction:
+        return FieldAction(self.label, self.key, self.action, self.detail)
+
+
+def field_label(field: dict) -> str:
+    """The most human name for a field, for the report."""
+    return (
+        field.get("label") or field.get("ariaLabel") or field.get("placeholder")
+        or field.get("name") or "(unlabelled)"
+    )
+
+
+def plan_field(field: dict, applicant: Applicant, attachments: dict) -> FieldPlan:
+    """Decide what one field should get. No browser, no side effects."""
+    label = field_label(field)
+    key = classify(
+        label=field.get("label", ""),
+        name=field.get("name", ""),
+        placeholder=field.get("placeholder", ""),
+        aria_label=field.get("ariaLabel", ""),
+        field_type=field.get("type", ""),
+    )
+
+    def plan(action, how="none", value="", detail="", override_key=None):
+        return FieldPlan(
+            field.get("id", ""), label,
+            key if override_key is None else override_key,
+            action, how, value, detail,
+        )
+
+    # Before any value is looked up, so there is no path from a form field to
+    # your answer bank for a credential. No opt-in, unlike self-identification.
+    if is_credential(key, field.get("type", "")):
+        return plan("skipped", detail="a credential — yours to type",
+                    override_key="password")
+
+    if is_eeo(key) and not applicant.fill_eeo:
+        return plan("skipped", detail="self-identification — yours to answer")
+
+    if field.get("type") == "file":
+        kind = key or "resume"
+        if kind not in attachments:
+            return plan("unmatched", detail="no file to attach")
+        return plan("filled", "file", kind, Path(str(attachments[kind])).name)
+
+    value = resolve_value(field, key, applicant)
+    if not value:
+        return plan("unmatched", detail="no value in your applicant file")
+
+    if field.get("tag") == "select":
+        option = choose_option(field.get("options", []), value)
+        if option is None:
+            available = ", ".join(o["text"] for o in field.get("options", [])[:4])
+            return plan("unmatched", detail=f"no option matches {value!r} (has: {available})")
+        return plan("filled", "select", option, value)
+
+    if field.get("type") == "checkbox":
+        if value.strip().lower() in {"yes", "true", "1", "on"}:
+            return plan("filled", "check", "true", "checked")
+        return plan("skipped", detail=f"value {value!r} is not a yes")
+
+    if field.get("type") == "radio":
+        # One radio per option; take the one whose own label matches.
+        own = (field.get("label") or "").strip().lower()
+        if own and (own in value.lower() or value.lower() in own):
+            return plan("filled", "radio", "true", (field.get("label") or "")[:40])
+        return plan("skipped", detail="not the selected option")
+
+    # Text, email, tel, url, number, date, textarea. Your applicant file wins
+    # over a CV parser's guess — you wrote one and something inferred the
+    # other — but say so, because a portal quietly disagreeing with you about
+    # your own phone number is worth seeing.
+    existing = (field.get("value") or "").strip()
+    detail = value[:60]
+    if existing and existing != value:
+        detail = f"{value[:40]}  (replaced {existing[:24]!r})"
+    return plan("filled", "text", value, detail)
+
+
+def _fill_fields(page, fields, applicant: Applicant, attachments) -> list[FieldAction]:
     actions: list[FieldAction] = []
 
     for field in fields:
-        label = (
-            field["label"] or field["ariaLabel"] or field["placeholder"]
-            or field["name"] or "(unlabelled)"
-        )
-        key = classify(
-            label=field["label"],
-            name=field["name"],
-            placeholder=field["placeholder"],
-            aria_label=field["ariaLabel"],
-            field_type=field["type"],
-        )
-        locator = page.locator(f'[data-jobpipe-id="{field["id"]}"]')
-
-        if is_eeo(key) and not applicant.fill_eeo:
-            actions.append(
-                FieldAction(label, key, "skipped", "self-identification — yours to answer")
-            )
+        plan = plan_field(field, applicant, attachments)
+        if plan.action != "filled":
+            actions.append(plan.to_action())
             continue
-
         try:
-            action = _fill_field(locator, field, key, applicant, attachments)
+            _apply(page.locator(f'[data-jobpipe-id="{plan.id}"]'), plan, attachments)
         except Exception as exc:  # a form quirk must not abort the rest
-            actions.append(FieldAction(label, key, "failed", str(exc)[:80]))
+            actions.append(FieldAction(plan.label, plan.key, "failed", str(exc)[:80]))
             continue
-        actions.append(FieldAction(label, key, action[0], action[1]))
+        actions.append(plan.to_action())
 
     return actions
 
 
-def _fill_field(locator, field, key, applicant, attachments) -> tuple[str, str]:
-    field_type, tag = field["type"], field["tag"]
+def _apply(locator, plan: FieldPlan, attachments) -> None:
+    """Carry out one plan. The only place this module writes to a page.
 
-    if field_type == "file":
-        path = attachments.get(key or "resume")
-        if not path:
-            return "unmatched", "no file to attach"
-        locator.set_input_files(str(path))
-        return "filled", path.name
-
-    value = resolve_value(field, key, applicant)
-    if not value:
-        return "unmatched", "no value in your applicant file"
-
-    if tag == "select":
-        option = choose_option(field["options"], value)
-        if option is None:
-            available = ", ".join(o["text"] for o in field["options"][:4])
-            return "unmatched", f"no option matches {value!r} (has: {available})"
-        locator.select_option(option)
-        return "filled", value
-
-    if field_type == "checkbox":
-        if value.strip().lower() in {"yes", "true", "1", "on"}:
-            locator.check()
-            return "filled", "checked"
-        return "skipped", f"value {value!r} is not a yes"
-
-    if field_type == "radio":
-        # One radio per option; fill the one whose own label matches.
-        own = (field["label"] or "").strip().lower()
-        if own and (own in value.lower() or value.lower() in own):
-            locator.check()
-            return "filled", field["label"][:40]
-        return "skipped", "not the selected option"
-
-    # Text, email, tel, url, number, date, textarea. `fill` sets the value
-    # directly and does not press Enter, so nothing can submit here.
-    locator.fill(value)
-    return "filled", value[:60]
+    Note what is absent: no click on anything but a checkbox or radio it was
+    told to check, and `fill` sets a value directly without pressing Enter.
+    """
+    if plan.how == "file":
+        locator.set_input_files(str(attachments[plan.value]))
+    elif plan.how == "select":
+        locator.select_option(plan.value)
+    elif plan.how in {"check", "radio"}:
+        locator.check()
+    elif plan.how == "text":
+        locator.fill(plan.value)
 
 
 def html_to_pdf(html_path: Path, pdf_path: Path) -> Path:
@@ -252,46 +357,115 @@ def html_to_pdf(html_path: Path, pdf_path: Path) -> Path:
     return pdf_path
 
 
-def gather_attachments(output_dir: Path) -> dict[str, Path]:
-    """Find the tailored documents to upload, making a PDF if needed."""
+def gather_attachments(
+    output_dir: Path, language: str = "en"
+) -> dict[str, Path]:
+    """Find the tailored documents to upload, making a PDF if needed.
+
+    Prefers the requested language and falls back to whatever the folder
+    has: asking for German when only the English resume was ever generated
+    should attach the English one rather than nothing at all.
+    """
     attachments: dict[str, Path] = {}
     if not output_dir or not output_dir.exists():
         return attachments
 
-    pdf = output_dir / "resume.pdf"
-    html = output_dir / "resume.html"
-    if not pdf.exists() and html.exists():
-        log.info("rendering %s", pdf)
-        html_to_pdf(html, pdf)
-    if pdf.exists():
-        attachments["resume"] = pdf
+    suffixes = ["" if language == "en" else f".{language}", ""]
 
-    cover = output_dir / "cover-letter.md"
-    if cover.exists():
-        attachments["cover_letter"] = cover
+    for sfx in suffixes:
+        pdf = output_dir / f"resume{sfx}.pdf"
+        html = output_dir / f"resume{sfx}.html"
+        if not pdf.exists() and html.exists():
+            log.info("rendering %s", pdf)
+            html_to_pdf(html, pdf)
+        if pdf.exists():
+            attachments["resume"] = pdf
+            break
+
+    for sfx in suffixes:
+        cover = output_dir / f"cover-letter{sfx}.md"
+        if cover.exists():
+            attachments["cover_letter"] = cover
+            break
+
     return attachments
 
 
-def run(row, applicant: Applicant, headless: bool = False, wait: bool = True) -> list[FieldAction]:
+def summarize(actions: list[FieldAction], url: str) -> str:
+    """The report for one pass over a page."""
+    filled = sum(1 for a in actions if a.action == "filled")
+    lines = [f"\n{url}", f"\n{filled} of {len(actions)} fields filled:\n"]
+    lines += [str(a) for a in actions] or ["  (no form fields on this page)"]
+
+    if any(a.key == "password" for a in actions):
+        lines.append(
+            "\nThis page wants an account. Sign in or register yourself in the "
+            "browser — this will not type a credential — then ask for a fill "
+            "again once the form is on screen."
+        )
+    return "\n".join(lines)
+
+
+HOLD_HELP = "\n[fill] fill the page you are on now   [Enter] close the browser"
+
+
+def _hold(page, applicant: Applicant, attachments, actions) -> list[FieldAction]:
+    """Keep the browser open, filling again whenever you ask.
+
+    One fill at load time only works when the form is the first thing you
+    see. Often it isn't: a login, a cookie wall, a "create an account" step
+    or a multi-page wizard sits in front of it, and a single pass at the
+    wrong moment fills nothing. So the browser stays open, you get to the
+    real form yourself, and you ask for another pass once you're on it.
+
+    Signing in is yours. This types no credential, and `fill` runs the very
+    same fill_page as the first pass — so it still cannot submit.
+    """
+    print(HOLD_HELP)
+    while True:
+        try:
+            command = input("jobpipe> ").strip().lower()
+        except EOFError:  # no terminal attached; nothing more to wait for
+            return actions
+
+        if command in {"", "done", "close", "q", "quit", "exit"}:
+            return actions
+        if command in {"fill", "f", "refill"}:
+            actions = fill_page(page, applicant, attachments)
+            print(summarize(actions, page.url))
+            print(HOLD_HELP)
+            continue
+        print("type 'fill', or press Enter to close")
+
+
+def run(
+    row,
+    applicant: Applicant,
+    headless: bool = False,
+    wait: bool = True,
+    language: str = "en",
+) -> list[FieldAction]:
     """Open the posting's form, fill it, and hand control to the human."""
     from playwright.sync_api import sync_playwright
 
     url = apply_form_url(row["url"])
     output_dir = Path(row["output_dir"]) if row["output_dir"] else None
-    attachments = gather_attachments(output_dir) if output_dir else {}
+    attachments = gather_attachments(output_dir, language) if output_dir else {}
 
     with sync_playwright() as p:
         browser = launch_chromium(p, headless=headless)
         page = browser.new_context().new_page()
-        page.goto(url, wait_until="domcontentloaded")
+
+        landed, note = resolve_posting(page, url)
+        if note:
+            print(f"  ! {note}")
         page.wait_for_timeout(1500)  # let client-rendered forms mount
 
         actions = fill_page(page, applicant, attachments)
+        print(summarize(actions, landed))
 
         if wait and not headless:
-            print("\nForm filled. Review every field, then submit it yourself.")
-            print("This tool does not and cannot click Submit.")
-            input("Press Enter here when you're done to close the browser... ")
+            actions = _hold(page, applicant, attachments, actions)
         browser.close()
 
     return actions
