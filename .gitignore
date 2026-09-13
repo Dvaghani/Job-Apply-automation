@@ -9,8 +9,17 @@ venv/
 config.yaml
 profile.md
 resume.json
+# Per-language masters: resume.de.json and friends.
+resume.*.json
 applicant.yaml
 applications/
 *.db
+# SQLite's write-ahead log sits beside the database and is not matched
+# by *.db.
+*.db-shm
+*.db-wal
 *.sqlite3
 .env
+
+# Extension token — a local secret, not shared.
+.jobpipe-token
