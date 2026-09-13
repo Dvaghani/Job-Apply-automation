@@ -1,6 +1,6 @@
 import pytest
 
-from jobpipe.fieldmap import classify, is_eeo, normalize
+from jobpipe.fieldmap import classify, is_credential, is_eeo, normalize
 
 
 def test_normalize_reduces_punctuation():
@@ -90,3 +90,29 @@ def test_self_identification_is_detected_so_it_can_be_skipped(label):
 def test_ordinary_fields_are_not_eeo():
     assert not is_eeo(classify(label="Email"))
     assert not is_eeo(None)
+
+
+# --- credentials ----------------------------------------------------------
+
+def test_password_input_type_is_credential_whatever_its_label():
+    """The browser's own type is the signal that no wording can disguise."""
+    assert is_credential(None, "password")
+    assert is_credential(classify(label="Lieblingsfarbe"), "password")
+
+
+@pytest.mark.parametrize("label", [
+    "Password", "Password *", "Confirm Password", "Passwort", "Kennwort",
+    "Pass phrase", "Passcode",
+])
+def test_password_labels_are_classified_as_credentials(label):
+    assert is_credential(classify(label=label))
+
+
+def test_ordinary_fields_are_not_credentials():
+    for label in ["First Name", "Email", "Phone", "Cover Letter"]:
+        assert not is_credential(classify(label=label))
+
+
+def test_a_credential_is_not_covered_by_the_self_identification_opt_in():
+    """Opting into EEO must not opt into typing passwords."""
+    assert not is_eeo("password")

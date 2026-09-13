@@ -21,10 +21,22 @@ FILLABLE = {
 # yours to answer or decline, and a bot guessing them is not acceptable.
 EEO = {"gender", "race", "ethnicity", "veteran_status", "disability_status"}
 
+# Credentials. Never filled, and there is no opt-in for them. Plenty of
+# employers put "create an account" in front of the form; signing up is
+# yours to do. A tool that types a password is a tool that stores one.
+CREDENTIAL = {"password"}
+
 # First match wins, so order is the specification. More specific patterns
 # must precede the general ones they would otherwise be swallowed by —
 # "current company" before "company", "first name" before "name".
 PATTERNS: list[tuple[str, str]] = [
+    # First, ahead of everything: a password must be recognized as one even
+    # on a form that labels it oddly, so it can be refused rather than
+    # falling through to the answer bank.
+    ("password",
+     r"\bpass[\s_-]*word\b|\bpasswort\b|\bkennwort\b|\bpasscode\b"
+     r"|\bpass[\s_-]*phrase\b"),
+
     ("first_name", r"\bfirst[\s_-]*name\b|\bgiven[\s_-]*name\b|\bfname\b|\bforename\b"),
     ("last_name", r"\blast[\s_-]*name\b|\bsurname\b|\bfamily[\s_-]*name\b|\blname\b"),
     ("preferred_name", r"\bpreferred[\s_-]*(first[\s_-]*)?name\b|\bnickname\b"),
@@ -123,3 +135,13 @@ def _match(text: str) -> str | None:
 
 def is_eeo(key: str | None) -> bool:
     return key in EEO
+
+
+def is_credential(key: str | None, field_type: str = "") -> bool:
+    """True for anything that authenticates you rather than describes you.
+
+    Type first: `type="password"` is the browser's own declaration and no
+    wording can disguise it. The key is the fallback for a form that uses a
+    plain text input for a passcode.
+    """
+    return field_type == "password" or key in CREDENTIAL
