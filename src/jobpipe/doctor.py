@@ -53,6 +53,34 @@ def check_backend(config) -> list[tuple[str, str, str]]:
 SOURCE_KEYS = {"greenhouse", "lever", "ashby", "smartrecruiters", "adzuna"}
 
 
+def check_commented_out(config) -> list[tuple[str, str, str]]:
+    """Catch a source block that is present in the file but commented out.
+
+    `#` is easy to leave in place when filling in credentials, and the
+    result is a config that looks filled in and parses to nothing.
+    """
+    if not config.path or not Path(config.path).exists():
+        return []
+    try:
+        text = Path(config.path).read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    out = []
+    for key in sorted(SOURCE_KEYS):
+        if key in (config.raw.get("sources") or {}) or key in (config.raw or {}):
+            continue
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#") and stripped.lstrip("# ").startswith(f"{key}:"):
+                out.append(_check(
+                    FAIL, f"`{key}:` is commented out",
+                    f"remove the leading `#` from that block in {config.path}",
+                ))
+                break
+    return out
+
+
 def check_misplaced(config) -> list[tuple[str, str, str]]:
     """Catch source blocks sitting at the top level instead of under `sources:`."""
     stray = sorted(SOURCE_KEYS & set(config.raw or {}))
@@ -65,7 +93,7 @@ def check_misplaced(config) -> list[tuple[str, str, str]]:
 
 def check_sources(config) -> list[tuple[str, str, str]]:
     """Report every source, including the ones doing nothing."""
-    out = check_misplaced(config)
+    out = check_misplaced(config) + check_commented_out(config)
     configured = 0
 
     for label, values in [

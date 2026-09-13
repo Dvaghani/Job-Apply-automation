@@ -57,6 +57,7 @@ class Config:
     applicant_path: str = "applicant.yaml"
     output_dir: str = "applications"
     raw: dict = field(default_factory=dict)
+    path: str = ""
 
     @property
     def greenhouse_boards(self) -> list[str]:
@@ -137,4 +138,5 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         applicant_path=data.get("applicant_path") or "applicant.yaml",
         output_dir=data.get("output_dir") or "applications",
         raw=data,
+        path=str(cfg_path),
     )

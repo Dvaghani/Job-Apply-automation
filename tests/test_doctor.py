@@ -115,3 +115,42 @@ def test_run_is_clean_when_everything_is_set(monkeypatch, tmp_path, capsys):
     )
     assert doctor.run(cfg) == 0
     assert "No problems found" in capsys.readouterr().out
+
+
+# --- commented-out blocks -------------------------------------------------
+
+def test_commented_out_source_block_is_caught(tmp_path):
+    """Filling in credentials but leaving the `#` gives a config that looks
+    done and parses to nothing."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "sources:\n"
+        "  smartrecruiters: [ContinentalAG]\n"
+        "\n"
+        "  # adzuna:\n"
+        "  #   app_id: abc123\n"
+        "  #   app_key: def456\n"
+        "  #   queries: ['engineer']\n"
+    )
+    cfg = Config(sources={"smartrecruiters": ["ContinentalAG"]},
+                 raw={"sources": {"smartrecruiters": ["ContinentalAG"]}},
+                 path=str(cfg_file))
+    checks = doctor.check_commented_out(cfg)
+    assert len(checks) == 1
+    status, label, detail = checks[0]
+    assert status == doctor.FAIL
+    assert "commented out" in label
+    assert "remove the leading `#`" in detail
+
+
+def test_active_block_is_not_reported_as_commented(tmp_path):
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("sources:\n  adzuna:\n    app_id: a\n    queries: ['x']\n")
+    cfg = Config(sources={"adzuna": {"app_id": "a", "queries": ["x"]}},
+                 raw={"sources": {"adzuna": {"app_id": "a"}}}, path=str(cfg_file))
+    assert doctor.check_commented_out(cfg) == []
+
+
+def test_commented_check_survives_a_missing_file():
+    assert doctor.check_commented_out(Config(path="/nonexistent/config.yaml")) == []
+    assert doctor.check_commented_out(Config()) == []
