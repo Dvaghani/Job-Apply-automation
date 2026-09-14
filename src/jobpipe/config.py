@@ -81,6 +81,18 @@ class Config:
     def adzuna(self) -> dict:
         return dict(self.sources.get("adzuna", {}) or {})
 
+    @property
+    def arbeitsagentur(self) -> dict:
+        return dict(self.sources.get("arbeitsagentur", {}) or {})
+
+    @property
+    def arbeitnow(self) -> dict:
+        return dict(self.sources.get("arbeitnow", {}) or {})
+
+    @property
+    def germantechjobs(self) -> dict:
+        return dict(self.sources.get("germantechjobs", {}) or {})
+
     def resume_for(self, language: str = "en") -> str:
         """The master resume to tailor from, for one output language.
 

@@ -50,7 +50,10 @@ def check_backend(config) -> list[tuple[str, str, str]]:
 
 # Keys that belong under `sources:`. Indented one level too few, they parse
 # fine and do nothing — a silent no-op that reads as "no new jobs".
-SOURCE_KEYS = {"greenhouse", "lever", "ashby", "smartrecruiters", "adzuna"}
+SOURCE_KEYS = {
+    "greenhouse", "lever", "ashby", "smartrecruiters", "adzuna",
+    "arbeitsagentur", "arbeitnow", "germantechjobs",
+}
 
 
 def check_commented_out(config) -> list[tuple[str, str, str]]:
@@ -132,6 +135,35 @@ def check_sources(config) -> list[tuple[str, str, str]]:
                 f"where={az.get('where') or 'anywhere'}",
             ))
 
+    ba = config.arbeitsagentur
+    if not ba:
+        out.append(_check(WARN, "arbeitsagentur", "no `arbeitsagentur:` block"))
+    elif not (ba.get("queries") or []):
+        # The silent-failure shape again: a block with nothing to ask for.
+        out.append(_check(FAIL, "arbeitsagentur",
+                          "`queries:` is empty — nothing will be fetched"))
+    else:
+        configured += 1
+        staffing = "excluded" if ba.get("exclude_staffing", True) else "INCLUDED"
+        out.append(_check(
+            OK, "arbeitsagentur",
+            f"{len(ba['queries'])} quer(ies), where={ba.get('where') or 'anywhere'}, "
+            f"{ba.get('umkreis', '-')}km, staffing agencies {staffing}",
+        ))
+
+    for label, block, detail in [
+        ("arbeitnow", config.arbeitnow,
+         lambda b: f"{len(b.get('keywords') or []) or 'no'} keyword filter(s), "
+                   f"{len(b.get('location_contains') or []) or 'no'} location filter(s)"),
+        ("germantechjobs", config.germantechjobs,
+         lambda b: f"{len(b.get('keywords') or []) or 'no'} keyword filter(s)"),
+    ]:
+        if not block:
+            out.append(_check(WARN, label, f"no `{label}:` block"))
+        else:
+            configured += 1
+            out.append(_check(OK, label, detail(block)))
+
     if configured == 0 and not any(s == FAIL for s, _, _ in out):
         out.append(_check(FAIL, "sources", "nothing is configured — `ingest` will find nothing"))
     return out
@@ -186,6 +218,43 @@ def probe_adzuna(config) -> list[tuple[str, str, str]]:
     return out
 
 
+def probe_arbeitsagentur(config) -> list[tuple[str, str, str]]:
+    """Run every configured query for real and report the counts.
+
+    Same purpose as the Adzuna probe: a query that matches nothing is
+    indistinguishable from a quiet day until you can see the number.
+    """
+    from .sources import arbeitsagentur
+    from .sources.base import SourceError
+
+    ba = config.arbeitsagentur
+    out = []
+    total = 0
+    for query in ba.get("queries") or []:
+        try:
+            _, found = arbeitsagentur.search(
+                query,
+                where=ba.get("where", ""),
+                radius_km=ba.get("umkreis"),
+                max_days_old=ba.get("max_days_old"),
+                offer_types=ba.get("angebotsart", arbeitsagentur.EMPLOYMENT),
+                exclude_staffing=bool(ba.get("exclude_staffing", True)),
+                size=1,
+            )
+        except SourceError as exc:
+            out.append(_check(FAIL, str(query), str(exc)[:90]))
+            continue
+        total += found
+        if found == 0:
+            out.append(_check(WARN, str(query), "0 job(s) — too narrow, or widen `umkreis`"))
+        else:
+            out.append(_check(OK, str(query), f"{found} job(s)"))
+
+    if total:
+        out.append(_check(OK, "total", f"{total} match(es) before dedup and filters"))
+    return out
+
+
 def run(config, probe: bool = False) -> int:
     """Print the report. Returns the number of failures."""
     sections = [
@@ -194,7 +263,9 @@ def run(config, probe: bool = False) -> int:
         ("Sources", check_sources(config)),
     ]
     if probe and config.adzuna:
-        sections.append(("Live check", probe_adzuna(config)))
+        sections.append(("Adzuna live check", probe_adzuna(config)))
+    if probe and config.arbeitsagentur.get("queries"):
+        sections.append(("Bundesagentur live check", probe_arbeitsagentur(config)))
 
     failures = 0
     for title, checks in sections:

@@ -30,6 +30,38 @@ sources:
   smartrecruiters:
     - ContinentalAG
 
+  # --- If you are job-hunting in Germany, start here --------------------
+  # The ATS feeds above are US-tech-weighted and return almost nothing for
+  # German employers. These three cover that market instead.
+
+  # Bundesagentur fuer Arbeit — the federal register. Free, no registration,
+  # by far the largest source in Germany, and it links to the employer.
+  # A description costs one extra request per job, so keep `queries` to a
+  # few broad words and let the fit scorer judge.
+  # arbeitsagentur:
+  #   where: "Chemnitz"
+  #   umkreis: 100            # km
+  #   max_days_old: 45
+  #   max_pages: 2
+  #   max_details: 150        # cap on description fetches per run
+  #   exclude_staffing: true  # drops Zeitarbeit and private recruiters —
+  #                           # most of the noise in a German tech search
+  #   queries:
+  #     - "Softwareentwickler"
+  #     - "Embedded"
+
+  # Arbeitnow — open, German-focused, descriptions included. A general board,
+  # so narrow it or it contributes the noise you came here to avoid.
+  # arbeitnow:
+  #   max_pages: 2
+  #   keywords: [software, engineer, entwickler, embedded, python]
+  #   location_contains: [germany, deutschland, remote]
+
+  # GermanTechJobs — small, all IT, usually states a salary. Publishes no
+  # location, so a `locations:` filter would reject all of it.
+  # germantechjobs:
+  #   keywords: [software, engineer, entwickler, embedded, python]
+
   # Optional broad aggregator. Free key: https://developer.adzuna.com/
   # Leave the whole block out if you only want the watchlist above.
   # adzuna:

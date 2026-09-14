@@ -9,7 +9,16 @@ from . import db
 from .config import Config
 from .filters import check
 from .models import Job
-from .sources import adzuna, ashby, greenhouse, lever, smartrecruiters
+from .sources import (
+    adzuna,
+    arbeitnow,
+    arbeitsagentur,
+    ashby,
+    germantechjobs,
+    greenhouse,
+    lever,
+    smartrecruiters,
+)
 from .sources.base import SourceError
 
 log = logging.getLogger(__name__)
@@ -95,13 +104,60 @@ def collect(config: Config, report: IngestReport) -> list[Job]:
         except SourceError as exc:
             report.errors.append(f"adzuna/{query}: {exc}")
 
+    ba = config.arbeitsagentur
+    if ba.get("queries"):
+        try:
+            found = arbeitsagentur.fetch(
+                queries=list(ba.get("queries") or []),
+                where=ba.get("where", ""),
+                radius_km=ba.get("umkreis"),
+                max_days_old=ba.get("max_days_old"),
+                max_pages=int(ba.get("max_pages", 2)),
+                max_details=int(ba.get("max_details", 150)),
+                offer_types=ba.get("angebotsart", arbeitsagentur.EMPLOYMENT),
+                exclude_staffing=bool(ba.get("exclude_staffing", True)),
+                # A description costs one request per job here, so let the
+                # hard filters throw a job out before it is paid for.
+                keep=lambda job: check(job, config.filters) is None,
+            )
+            log.info("arbeitsagentur: %d jobs", len(found))
+            jobs.extend(found)
+        except SourceError as exc:
+            report.errors.append(f"arbeitsagentur: {exc}")
+
+    an = config.arbeitnow
+    if an:
+        try:
+            found = arbeitnow.fetch(
+                keywords=list(an.get("keywords") or []),
+                location_contains=list(an.get("location_contains") or []),
+                max_pages=int(an.get("max_pages", 2)),
+            )
+            log.info("arbeitnow: %d jobs", len(found))
+            jobs.extend(found)
+        except SourceError as exc:
+            report.errors.append(f"arbeitnow: {exc}")
+
+    gtj = config.germantechjobs
+    if gtj:
+        try:
+            found = germantechjobs.fetch(
+                keywords=list(gtj.get("keywords") or []),
+                limit=gtj.get("limit"),
+            )
+            log.info("germantechjobs: %d jobs", len(found))
+            jobs.extend(found)
+        except SourceError as exc:
+            report.errors.append(f"germantechjobs: {exc}")
+
     return jobs
 
 
 def run(config: Config, conn) -> IngestReport:
     report = IngestReport()
     if not any([config.greenhouse_boards, config.lever_sites, config.ashby_orgs,
-                config.smartrecruiters_companies, config.adzuna]):
+                config.smartrecruiters_companies, config.adzuna,
+                config.arbeitsagentur, config.arbeitnow, config.germantechjobs]):
         report.errors.append(
             "no sources configured — run `jobpipe doctor` to see what's missing"
         )

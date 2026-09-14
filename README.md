@@ -12,7 +12,8 @@ ATS databases. The bottleneck worth automating is *finding and judging* the
 right roles, not clicking submit.
 
 ```
-ingest (Greenhouse/Lever/Ashby/Adzuna) → hard filters → LLM fit score
+ingest (Bundesagentur/Arbeitnow/GermanTechJobs/ATS feeds/Adzuna)
+    → hard filters → LLM fit score
     → review queue (you decide) → tailor resume + cover letter
     → assisted autofill (you submit) → track
 ```
@@ -28,6 +29,7 @@ ingest (Greenhouse/Lever/Ashby/Adzuna) → hard filters → LLM fit score
 | 4 — Dashboard: run the whole pipeline from one page | ✅ |
 | 5 — Chrome extension: fill forms in your own browser | ✅ |
 | 6 — German output, and a folder you can upload from by hand | ✅ |
+| 7 — German-market sources: Bundesagentur, Arbeitnow, GermanTechJobs | ✅ |
 
 ## Install
 
@@ -224,6 +226,36 @@ per call. Build a watchlist of board slugs and you get clean structured data
 with no scraping, no bot detection, and no terms-of-service problem. Adzuna is
 available as a broader aggregator (free tier: 1,000 calls/month) for companies
 not yet on your list.
+
+**The German sources.** The free ATS feeds are US-tech-weighted, so a German
+search needs different inputs:
+
+- **Bundesagentur für Arbeit** — the federal register, and the primary source
+  for Germany. Free, no registration, the largest by a wide margin, and it
+  links to the employer rather than to itself. It can exclude Zeitarbeit and
+  private recruiters *at the source* (`exclude_staffing`), which removes most
+  of the noise in a German technical search: the same role relisted by six
+  agencies, none of whom are the employer.
+- **Arbeitnow** — open, German-focused, full descriptions in the listing. A
+  general board rather than a technical one, so narrow it with `keywords` and
+  `location_contains` or it contributes exactly the noise it was added to
+  replace.
+- **GermanTechJobs** — small, all IT, and it usually states a salary, which
+  German postings almost never do. It publishes no location, so a `locations:`
+  filter would reject all of it.
+
+Two things about the federal register are worth knowing. Search is **v6**;
+`/pc/v4/jobs` answers 403 and is gone, whatever the documentation says, while
+job *details* are still on v4 and address a posting by its Base64-encoded
+reference number. And search results carry no description, so a description
+costs one extra request per job.
+
+That second point shapes the adapter. The pipeline already refuses to spend an
+LLM call on a job the hard filters would reject; `arbeitsagentur.fetch` takes
+the same predicate and applies it one stage earlier, so a title you would
+throw away never costs a round trip either. On a real run that skipped 205 of
+323 detail requests — every job it kept had a description, and every job it
+skipped was one the filters rejected anyway.
 
 **A coverage caveat worth knowing before you build a watchlist.** The free ATS
 feeds are heavily US-tech-weighted. Greenhouse, Lever and Ashby returned
@@ -508,7 +540,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-384 tests, no network. Source parsers run against recorded payload shapes,
+412 tests, no network. Source parsers run against recorded payload shapes,
 the tailoring pipeline runs end to end with the model call stubbed, and
 autofill is driven by a real headless Chromium against a synthetic ATS form
 covering every label shape. The job-board adapters have separately been
