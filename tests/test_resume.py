@@ -213,7 +213,7 @@ def test_languages_reach_the_rendered_resume(tmp_path):
 
 
 def test_education_shows_the_full_date_range(tmp_path):
-    assert "(2022-10 – 2026-09)" in _rendered(tmp_path)
+    assert "(Oct 2022 – Sep 2026)" in _rendered(tmp_path)
 
 
 def test_a_master_without_the_extra_sections_renders_without_empty_headings(tmp_path):
@@ -298,3 +298,45 @@ def test_html_in_the_letter_text_is_escaped(tmp_path):
     html = _letter(tmp_path, "I use <script>alert(1)</script> daily.")
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+# --- how the resume reads -------------------------------------------------
+
+def test_dates_are_human_not_machine():
+    """A master stores "2023-07"; printing that makes it look machine-written."""
+    assert resume.format_month("2023-07") == "Jul 2023"
+    assert resume.format_month("2023-07", "de") == "Jul. 2023"
+
+
+def test_a_year_only_date_is_left_alone():
+    assert resume.format_month("2020") == "2020"
+
+
+def test_an_unparseable_date_passes_through_untouched():
+    for odd in ["", "Present", "2023-13", "soon-ish"]:
+        assert resume.format_month(odd) == odd
+
+
+def test_role_dates_read_as_a_range(tmp_path):
+    role = resume.Role(index=0, name="IAV", position="Werkstudent",
+                       start="2023-07", end="2024-09")
+    assert resume.role_dates(role) == "Jul 2023 – Sep 2024"
+    assert resume.role_dates(role, "de") == "Jul. 2023 – Sep. 2024"
+
+
+def test_an_open_ended_role_says_present_in_the_output_language(tmp_path):
+    role = resume.Role(index=0, name="IAV", position="Werkstudent", start="2023-07")
+    assert resume.role_dates(role) == "Jul 2023 – Present"
+    assert resume.role_dates(role, "de") == "Jul. 2023 – heute"
+
+
+def test_the_print_layout_does_not_double_its_margins():
+    """@page margin plus body padding was costing 1.8in of every page."""
+    css = resume.HTML_SHELL
+    assert "body { padding: 0; max-width: none; }" in css.replace("{{", "{").replace("}}", "}")
+
+
+def test_headings_are_kept_with_what_follows_them():
+    css = resume.HTML_SHELL
+    assert "page-break-after: avoid" in css
+    assert "page-break-inside: avoid" in css

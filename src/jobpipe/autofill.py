@@ -344,6 +344,25 @@ def _apply(locator, plan: FieldPlan, attachments) -> None:
         locator.fill(plan.value)
 
 
+def pdf_page_count(pdf_path: Path) -> int:
+    """How many pages a PDF came to.
+
+    Read out of the page tree rather than with a PDF library: this is only
+    ever asked of Chromium's own output, where the root /Pages node carries
+    the total, and a dependency for one integer is a poor trade. Verified
+    against pypdf on every PDF this tool had produced.
+    """
+    try:
+        data = pdf_path.read_bytes()
+    except OSError:
+        return 0
+    counts = [int(n) for n in re.findall(rb"/Count\s+(\d+)", data)]
+    if counts:
+        return max(counts)
+    # A nested or unusual tree: fall back to counting page objects.
+    return len(re.findall(rb"/Type\s*/Page[^s]", data)) or 1
+
+
 def html_to_pdf(html_path: Path, pdf_path: Path) -> Path:
     """Render the tailored resume to PDF, for forms that want an upload."""
     from playwright.sync_api import sync_playwright

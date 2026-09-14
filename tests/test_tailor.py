@@ -97,7 +97,7 @@ def fake_pdf(monkeypatch):
     """
     def render(html_path, pdf_path):
         pdf_path.write_bytes(b"%PDF-1.4 stub")
-        return pdf_path
+        return pdf_path, 1
 
     monkeypatch.setattr(tailor, "write_pdf", render)
 
@@ -126,11 +126,11 @@ def test_a_failed_pdf_render_does_not_fail_the_tailoring(tmp_path, monkeypatch):
         raise RuntimeError("no browser here")
 
     monkeypatch.setattr(autofill, "html_to_pdf", explode)
-    assert REAL_WRITE_PDF(tmp_path / "resume.html", tmp_path / "resume.pdf") is None
+    assert REAL_WRITE_PDF(tmp_path / "resume.html", tmp_path / "resume.pdf") == (None, 0)
 
 
 def test_write_outputs_keeps_going_when_there_is_no_pdf(tmp_path, master, monkeypatch):
-    monkeypatch.setattr(tailor, "write_pdf", lambda html, pdf: None)
+    monkeypatch.setattr(tailor, "write_pdf", lambda html, pdf: (None, 0))
     written = tailor.write_outputs(tmp_path / "app", master, T(), row(), [])
     names = {p.name for p in written}
     assert "resume.md" in names

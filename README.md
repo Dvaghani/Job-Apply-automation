@@ -316,6 +316,19 @@ ordinary noun (`Kubernetes`) would not be caught. The number check, which
 catches the inflated-metric case that actually matters, is unchanged, and
 `NOTES.de.md` says all of this so it is never a silent downgrade.
 
+**Two pages.** A tailored resume is laid out to fit two, and the count is
+checked rather than hoped for: the page total is read out of the PDF after
+rendering, and anything longer says so in the log. The single biggest cause
+was a layout bug — the print stylesheet set a `@page` margin *and* body
+padding, spending 1.8in of every 11in page on nothing. Fixing that alone took
+three-page resumes to two with identical content. Headings now stay with what
+follows them, and bullets do not split across a page.
+
+The model also chooses which projects earn their space, by index into the
+master. That is selection, not rewriting — the text stays verbatim, so it
+cannot introduce a claim — and it drops the project whose substance already
+appears in a role bullet.
+
 **Verification — the part that matters.** An LLM rewriting your resume can
 quietly inflate a metric or add a technology you never used. That is the worst
 failure mode here: a false claim on a document you will be interviewed
@@ -495,7 +508,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-349 tests, no network. Source parsers run against recorded payload shapes,
+384 tests, no network. Source parsers run against recorded payload shapes,
 the tailoring pipeline runs end to end with the model call stubbed, and
 autofill is driven by a real headless Chromium against a synthetic ATS form
 covering every label shape. The job-board adapters have separately been

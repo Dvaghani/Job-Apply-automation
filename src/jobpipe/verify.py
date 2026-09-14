@@ -196,6 +196,19 @@ def check_tailoring(
             findings += check_numbers(source, bullet.text, where)
             findings += check_vocabulary(master, bullet.text, where, language)
 
+    # Project selection is by index into the master. A bad one silently
+    # drops a project from the output, so say so rather than let the resume
+    # come out quietly shorter than intended.
+    for index in getattr(tailoring, "selected_projects", None) or []:
+        if not 0 <= index < len(resume.projects):
+            findings.append(
+                Finding(
+                    "index",
+                    f"project {index}",
+                    f"the master has {len(resume.projects)} project(s)",
+                )
+            )
+
     # The summary and skills draw on the whole resume, not one bullet.
     findings += check_numbers(master, tailoring.summary, "summary")
     findings += check_vocabulary(master, tailoring.summary, "summary", language)

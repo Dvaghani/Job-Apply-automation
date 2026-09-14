@@ -146,13 +146,40 @@ def load(path: str | Path) -> Resume:
     )
 
 
+# Abbreviated months, per language. A master stores "2023-07" because it is
+# machine-readable; a resume that prints it that way looks machine-written.
+SHORT_MONTHS = {
+    "en": ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    "de": ["Jan.", "Feb.", "Mär.", "Apr.", "Mai", "Jun.",
+           "Jul.", "Aug.", "Sep.", "Okt.", "Nov.", "Dez."],
+}
+
+
+def format_month(value: str, language: str = "en") -> str:
+    """Turn "2023-07" into "Jul 2023". Anything else is passed through."""
+    text = (value or "").strip()
+    parts = text.split("-")
+    if len(parts) < 2:
+        return text
+    try:
+        year, month = int(parts[0]), int(parts[1])
+    except ValueError:
+        return text
+    if not 1 <= month <= 12:
+        return text
+    return f"{SHORT_MONTHS.get(language, SHORT_MONTHS['en'])[month - 1]} {year}"
+
+
 def role_dates(role: Role, language: str = "en") -> str:
     """A role's date range, with "Present" in the output language."""
-    if role.start and role.end:
-        return f"{role.start} – {role.end}"
-    if role.start:
-        return f"{role.start} – {headings(language)['present']}"
-    return role.end or ""
+    start = format_month(role.start, language)
+    end = format_month(role.end, language)
+    if start and end:
+        return f"{start} – {end}"
+    if start:
+        return f"{start} – {headings(language)['present']}"
+    return end or ""
 
 
 def render_markdown(resume: Resume, tailored, language: str = "en") -> str:
@@ -200,9 +227,19 @@ def render_markdown(resume: Resume, tailored, language: str = "en") -> str:
     # That is deliberate: it is the reason these sections need no verification
     # pass — there is no route by which a project or a thesis could acquire a
     # claim you did not write yourself.
-    if resume.projects:
+    projects = resume.projects
+    wanted = list(getattr(tailored, "selected_projects", None) or [])
+    if wanted:
+        # Selection only — the text stays verbatim, so choosing which projects
+        # to show cannot introduce a claim. An out-of-range index is dropped
+        # here and reported by `verify`; selecting none of them falls back to
+        # all, since an empty Projects section is worse than a long one.
+        picked = [resume.projects[i] for i in wanted if 0 <= i < len(resume.projects)]
+        projects = picked or resume.projects
+
+    if projects:
         lines += ["", "## " + h["projects"]]
-        for project in resume.projects:
+        for project in projects:
             lines += ["", f"### {project.get('name', '')}"]
             if project.get("description"):
                 lines += [f"*{project['description']}*", ""]
@@ -218,7 +255,8 @@ def render_markdown(resume: Resume, tailored, language: str = "en") -> str:
                 x for x in [edu.get("studyType"), edu.get("area")] if x
             )
             dates = " – ".join(
-                x for x in [edu.get("startDate"), edu.get("endDate")] if x
+                format_month(x, language)
+                for x in [edu.get("startDate"), edu.get("endDate")] if x
             )
             entry = f"**{edu.get('institution', '')}**"
             if degree:
@@ -250,18 +288,32 @@ HTML_SHELL = """<!doctype html>
 <html lang="{lang}"><head><meta charset="utf-8">
 <title>{name} — {role}</title>
 <style>
-  body {{ max-width: 7.5in; margin: 0 auto; padding: 0.6in 0.5in;
-         font: 11pt/1.45 Georgia, "Times New Roman", serif; color: #111; }}
-  h1 {{ font-size: 20pt; margin: 0 0 2px; letter-spacing: -0.01em; }}
-  h2 {{ font-size: 11pt; text-transform: uppercase; letter-spacing: 0.08em;
-        border-bottom: 1px solid #bbb; padding-bottom: 3px;
-        margin: 18px 0 8px; }}
-  h3 {{ font-size: 11.5pt; margin: 12px 0 1px; }}
-  p, li {{ margin: 3px 0; }}
-  em {{ color: #555; font-size: 10pt; }}
-  ul {{ margin: 5px 0 0; padding-left: 18px; }}
-  .contact {{ color: #444; font-size: 10pt; margin-bottom: 4px; }}
-  @media print {{ body {{ padding: 0.4in; }} @page {{ margin: 0.5in; }} }}
+  body {{ max-width: 7.5in; margin: 0 auto; padding: 0.5in;
+         font: 10.5pt/1.38 Georgia, "Times New Roman", serif; color: #111;
+         /* Never strand a single line across a page break. */
+         orphans: 2; widows: 2; }}
+  h1 {{ font-size: 19pt; margin: 0 0 1px; letter-spacing: -0.01em; }}
+  h2 {{ font-size: 10pt; text-transform: uppercase; letter-spacing: 0.09em;
+        color: #333; border-bottom: 0.7pt solid #999; padding-bottom: 2px;
+        margin: 14px 0 6px; }}
+  h3 {{ font-size: 11pt; margin: 9px 0 0; }}
+  p, li {{ margin: 2px 0; }}
+  em {{ color: #555; font-size: 9.5pt; font-style: normal; }}
+  ul {{ margin: 3px 0 0; padding-left: 16px; }}
+  .contact {{ color: #444; font-size: 9.5pt; margin-bottom: 2px; }}
+
+  /* A heading alone at the foot of a page, or an entry split from its own
+     title, is what makes a generated resume look generated. */
+  h2, h3 {{ break-after: avoid; page-break-after: avoid; }}
+  h3 + em, h3 + p {{ break-before: avoid; page-break-before: avoid; }}
+  li {{ break-inside: avoid; page-break-inside: avoid; }}
+
+  @media print {{
+    /* The page box already carries the margin. Padding here as well was
+       costing 1.8in of every 11in page. */
+    body {{ padding: 0; max-width: none; }}
+    @page {{ margin: 0.5in 0.55in; }}
+  }}
 </style></head><body>
 {body}
 </body></html>

@@ -22,6 +22,10 @@ log = logging.getLogger(__name__)
 
 MAX_DESCRIPTION_CHARS = 8000
 
+# Two pages is the convention almost everywhere, and the length a
+# recruiter actually reads. Past it, say so rather than let it ship.
+RESUME_PAGE_LIMIT = 2
+
 SYSTEM = """You tailor one candidate's existing resume to one job posting.
 
 THE ONE RULE: you may only select, reorder and rephrase material that is \
@@ -44,6 +48,13 @@ exactly as the master states it.
 - Order skills by relevance to the posting; include only skills the master \
 already lists.
 - Write a summary of 2-3 lines aimed squarely at this role.
+- In `selected_projects`, give the indices of the projects worth the space \
+for THIS posting and leave the rest out. Drop one whose substance already \
+appears in a role bullet: repeating it costs a third of a page and tells the \
+reader nothing new.
+- Aim for two pages. Education, projects and languages are printed in full \
+from the master and you cannot shorten them, so the length you control is the \
+number of bullets — cut harder rather than keep a weak one.
 
 For `source_index`, give the index of the master bullet each rewrite came \
 from, counting from 0 within that role. This is checked, so it must be \
@@ -92,6 +103,13 @@ class Tailoring(BaseModel):
     roles: list[TailoredRole]
     selected_skills: list[str] = Field(description="Relevant skills, most relevant first")
     cover_letter: str = Field(default="", description="Cover letter, or empty if not requested")
+    selected_projects: list[int] = Field(
+        default_factory=list,
+        description=(
+            "0-based indices of the master's projects worth including for this "
+            "posting, most relevant first. Empty means include them all."
+        ),
+    )
     keywords_matched: list[str] = Field(
         default_factory=list,
         description="Terms from the posting the tailored resume genuinely supports",
@@ -116,9 +134,12 @@ def _resume_for_prompt(resume: Resume) -> str:
             keywords = ", ".join(group.get("keywords") or [])
             lines.append(f"  {group.get('name', '')}: {keywords}")
     if resume.projects:
-        lines.append("\nPROJECTS:")
-        for project in resume.projects:
-            lines.append(f"  {project.get('name', '')}: {project.get('description', '')}")
+        # Indexed, because the model can only cite an index it was shown.
+        lines.append("\nPROJECTS (selected_projects index):")
+        for i, project in enumerate(resume.projects):
+            lines.append(
+                f"  [{i}] {project.get('name', '')}: {project.get('description', '')}"
+            )
     if resume.education:
         lines.append("\nEDUCATION:")
         for edu in resume.education:
@@ -195,7 +216,7 @@ def suffix_for(language: str) -> str:
     return "" if not language or language == "en" else f".{language}"
 
 
-def write_pdf(html_path: Path, pdf_path: Path) -> Path | None:
+def write_pdf(html_path: Path, pdf_path: Path) -> tuple[Path | None, int]:
     """Render the resume to PDF now, rather than when a form asks for one.
 
     Application forms want a PDF, and so does anyone uploading by hand after
@@ -203,13 +224,14 @@ def write_pdf(html_path: Path, pdf_path: Path) -> Path | None:
     always ready to use. It needs a browser, so a missing Playwright is a
     warning and not a failed tailoring run.
     """
-    from .autofill import html_to_pdf
+    from .autofill import html_to_pdf, pdf_page_count
 
     try:
-        return html_to_pdf(html_path, pdf_path)
+        written = html_to_pdf(html_path, pdf_path)
     except Exception as exc:
         log.warning("could not render %s: %s", pdf_path.name, str(exc)[:100])
-        return None
+        return None, 0
+    return written, pdf_page_count(written)
 
 
 def write_outputs(
@@ -235,9 +257,14 @@ def write_outputs(
     )
     written.append(resume_html)
 
-    pdf = write_pdf(resume_html, directory / f"resume{sfx}.pdf")
+    pdf, pages = write_pdf(resume_html, directory / f"resume{sfx}.pdf")
     if pdf is not None:
         written.append(pdf)
+        if pages > RESUME_PAGE_LIMIT:
+            log.warning(
+                "%s is %d pages — trim bullets, or shorten the master's "
+                "education summary", pdf.name, pages,
+            )
 
     if tailoring.cover_letter.strip():
         body = tailoring.cover_letter.strip()
@@ -255,7 +282,7 @@ def write_outputs(
         )
         written.append(cover_html)
 
-        cover_pdf = write_pdf(cover_html, directory / f"cover-letter{sfx}.pdf")
+        cover_pdf, _ = write_pdf(cover_html, directory / f"cover-letter{sfx}.pdf")
         if cover_pdf is not None:
             written.append(cover_pdf)
 
