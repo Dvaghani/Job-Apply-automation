@@ -85,6 +85,7 @@ jobpipe apply      # list approved jobs and their fingerprints
 jobpipe apply <fingerprint>   # open the form, fill it — you submit
 jobpipe stats      # counts by status
 jobpipe doctor     # check config, files, backend and sources
+jobpipe export     # bundle your setup for another machine
 ```
 
 If `ingest` returns less than you expect, run **`jobpipe doctor`** first. A
@@ -550,6 +551,48 @@ per-bullet verification possible. Treat the master as a **superset** — put
 every accomplishment you might ever want in it, and let each tailored resume
 be a subset.
 
+## Moving to another machine
+
+The code is in git. Nothing that makes it *yours* is — config, profile,
+master resumes, applicant answers, the job database and everything already
+tailored are gitignored on purpose, because a public repo is the wrong place
+for an API key and a job search.
+
+```bash
+jobpipe export                     # -> jobpipe-setup.zip
+```
+
+Then on the other machine:
+
+```bash
+git clone https://github.com/Dvaghani/Job-Apply-automation
+cd Job-Apply-automation
+unzip /path/to/jobpipe-setup.zip   # over the top of the clone
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[browser]" && playwright install chromium
+jobpipe doctor
+```
+
+`export` exists rather than "copy these files" because of one trap. SQLite in
+WAL mode keeps recent writes in a `-wal` file beside the database, and that
+file is routinely *larger than the database itself* — 6.9MB against 4MB here.
+Copy `jobs.db` alone and you lose every decision since the last checkpoint.
+`export` checkpoints first, so the archive holds one complete file.
+
+The extension token is deliberately left out: a secret is better regenerated
+than carried around, and the extension needs re-pointing at the new machine
+anyway. Everything else comes across, including both language masters.
+
+**Paths in the database are stored with forward slashes** whatever the
+platform. A Windows path is not a path on Linux — `applicationscme` is one
+filename with a backslash in it — so storing one would quietly turn every
+tailored job back into an untailored one on the other machine. Rows written
+before this are read leniently, so an older database still works.
+
+What does *not* travel: Claude Code must be installed and signed in on the
+new machine (or `ANTHROPIC_API_KEY` set, for the `api` backend), and
+Playwright needs its own Chromium there.
+
 ## Tests
 
 ```bash
@@ -557,7 +600,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-441 tests, no network. Source parsers run against recorded payload shapes,
+452 tests, no network. Source parsers run against recorded payload shapes,
 the tailoring pipeline runs end to end with the model call stubbed, and
 autofill is driven by a real headless Chromium against a synthetic ATS form
 covering every label shape. The job-board adapters have separately been

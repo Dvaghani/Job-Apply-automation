@@ -21,5 +21,10 @@ applications/
 *.sqlite3
 .env
 
+# Exported setups. These contain the config, credentials, resumes and
+# the whole job history — everything above, in one file.
+jobpipe-setup*.zip
+*.jobpipe.zip
+
 # Extension token — a local secret, not shared.
 .jobpipe-token

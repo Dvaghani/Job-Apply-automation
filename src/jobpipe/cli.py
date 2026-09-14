@@ -8,7 +8,7 @@ import sys
 import webbrowser
 
 from . import applicant as applicant_mod
-from . import autofill, db, doctor, ingest, score, tailor, web
+from . import autofill, db, doctor, ingest, portable, score, tailor, web
 from .config import ConfigError, load_config
 from .applicant import ApplicantError
 from .llm import LLMError
@@ -175,6 +175,27 @@ def cmd_stats(config, args) -> int:
     return 0
 
 
+def cmd_export(config, args) -> int:
+    """Bundle the personal half of a setup, for another machine."""
+    try:
+        archive, count = portable.export(config, args.output)
+    except (FileNotFoundError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    size = archive.stat().st_size / 1_000_000
+    print(f"{count} file(s) -> {archive}  ({size:.1f} MB)")
+    print()
+    print("On the other machine:")
+    print("  git clone https://github.com/Dvaghani/Job-Apply-automation")
+    print("  cd Job-Apply-automation")
+    print(f"  unzip {archive.name}")
+    print("  python3 -m venv .venv && source .venv/bin/activate")
+    print("  pip install -e '.[browser]' && playwright install chromium")
+    print("  jobpipe doctor")
+    return 0
+
+
 def cmd_run(config, args) -> int:
     """ingest + score in one go — the usual daily command."""
     rc = cmd_ingest(config, args)
@@ -272,6 +293,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("stats", help="show counts by status")
+
+    p_export = sub.add_parser(
+        "export",
+        help="bundle your config, resumes, answers and job history into a zip",
+    )
+    p_export.add_argument(
+        "output", nargs="?", default="jobpipe-setup.zip",
+        help="where to write the archive (default: jobpipe-setup.zip)",
+    )
     return parser
 
 
@@ -284,6 +314,7 @@ COMMANDS = {
     "dashboard": cmd_dashboard,
     "review": cmd_review,
     "stats": cmd_stats,
+    "export": cmd_export,
     "doctor": cmd_doctor,
 }
 

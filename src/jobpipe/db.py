@@ -181,9 +181,16 @@ def set_status(conn: sqlite3.Connection, fingerprint: str, status: str) -> None:
 
 
 def mark_tailored(conn: sqlite3.Connection, fingerprint: str, directory: str) -> None:
+    """Record where a job's tailored documents were written.
+
+    Stored with forward slashes whatever the platform. A Windows path in the
+    database is one filename with a backslash in it on Linux, not a folder —
+    which silently turns every tailored job back into an untailored one the
+    moment the database moves between machines.
+    """
     conn.execute(
         "UPDATE jobs SET tailored_at = ?, output_dir = ? WHERE fingerprint = ?",
-        (utcnow(), directory, fingerprint),
+        (utcnow(), Path(directory).as_posix(), fingerprint),
     )
 
 

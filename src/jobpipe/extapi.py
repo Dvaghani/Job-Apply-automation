@@ -78,10 +78,15 @@ def load_or_create_token(path: str | Path = TOKEN_FILE) -> str:
 
 
 def job_folder(row) -> Path | None:
-    """Where a job's tailored documents live, if it has been tailored."""
+    """Where a job's tailored documents live, if it has been tailored.
+
+    Accepts either separator. Rows written on Windows hold backslashes, and
+    those are not path separators on Linux — without this, moving the
+    database to another machine makes every tailored job look untailored.
+    """
     if not row or not row["output_dir"]:
         return None
-    folder = Path(row["output_dir"])
+    folder = Path(str(row["output_dir"]).replace("\\", "/"))
     return folder if folder.is_dir() else None
 
 
