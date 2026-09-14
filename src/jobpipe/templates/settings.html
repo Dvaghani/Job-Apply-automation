@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+
+{% block title %}jobpipe — settings{% endblock %}
+{% block heading %}Settings{% endblock %}
+{% block subtitle %}
+  What the pipeline searches for and what it throws away.
+  Written to <code>{{ config_path }}</code>.
+{% endblock %}
+
+{% block style %}
+  .group { background: var(--card); border: 1px solid var(--line);
+           border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  .group > h3 { margin: 0; padding: 11px 16px; font-size: 13px;
+                border-bottom: 1px solid var(--line);
+                text-transform: uppercase; letter-spacing: 0.06em;
+                color: var(--muted); }
+  .field { padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  .field:last-child { border-bottom: 0; }
+  .field > label { display: block; font-weight: 600; font-size: 13.5px; }
+  .field .help { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .field .control { margin-top: 8px; }
+
+  input[type=text], input[type=number] {
+    font: inherit; font-size: 13px; padding: 5px 9px; color: var(--fg);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+  input[type=text] { width: 100%; max-width: 460px; }
+  input[type=number] { width: 110px; }
+  input.bad { border-color: #ef4444; }
+
+  .terms { display: flex; flex-direction: column; gap: 6px; }
+  .term { display: flex; gap: 8px; align-items: center; }
+  .term input { flex: 1; max-width: 360px; }
+  .term .count { font-size: 12px; font-variant-numeric: tabular-nums;
+                 color: var(--muted); min-width: 6.5em; }
+  .term .count.wide { color: var(--mid); }
+  .term .count.none { color: #ef4444; }
+  .term .count.good { color: var(--good); }
+  .term button { padding: 3px 9px; font-size: 12px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .chip { font-size: 12px; padding: 2px 8px; border-radius: 999px;
+          border: 1px solid var(--line); color: var(--muted); cursor: pointer;
+          background: var(--bg); }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+
+  .bar { position: sticky; bottom: 0; background: var(--bg);
+         border-top: 1px solid var(--line); padding: 12px 2px;
+         display: flex; gap: 10px; align-items: center; margin-top: 18px; }
+  .bar .grow { flex: 1; }
+  #saved { font-size: 13px; }
+  #saved.ok { color: var(--good); }
+  #saved.bad { color: #ef4444; }
+{% endblock %}
+
+{% block content %}
+  {% for group, settings in groups %}
+    <div class="group">
+      <h3>{{ group }}</h3>
+      {% for s in settings %}
+        <div class="field" data-key="{{ s.key }}" data-kind="{{ s.kind }}">
+          <label for="f-{{ s.key }}">{{ s.label }}</label>
+          {% if s.help %}<div class="help">{{ s.help }}</div>{% endif %}
+          <div class="control">
+            {% if s.kind == 'list' %}
+              <div class="terms" id="f-{{ s.key }}"></div>
+              <div style="margin-top:7px; display:flex; gap:8px">
+                <button type="button" class="add">Add</button>
+                {% if s.key.endswith('arbeitsagentur.queries') %}
+                  <button type="button" class="probe-all">Probe all</button>
+                {% endif %}
+              </div>
+              {% if s.key.endswith('arbeitsagentur.queries') %}
+                <div class="chips">
+                  {% for t in ['HiL', 'Steuergerät', 'ECU', 'AUTOSAR', 'CAN',
+                               'Testautomatisierung', 'Werkstudent Informatik',
+                               'Embedded Softwareentwickler', 'ADAS',
+                               'Fahrerassistenz', 'Bildverarbeitung'] %}
+                    <span class="chip">{{ t }}</span>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            {% elif s.kind == 'bool' %}
+              <label style="font-weight:400; display:inline-flex; gap:6px; align-items:center">
+                <input type="checkbox" id="f-{{ s.key }}"> enabled
+              </label>
+            {% elif s.kind == 'int' %}
+              <input type="number" id="f-{{ s.key }}"
+                     {% if s.minimum is not none %}min="{{ s.minimum }}"{% endif %}
+                     {% if s.maximum is not none %}max="{{ s.maximum }}"{% endif %}
+                     placeholder="unset">
+            {% else %}
+              <input type="text" id="f-{{ s.key }}" placeholder="{{ s.placeholder }}">
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endfor %}
+
+  <div class="bar">
+    <button class="yes" id="save">Save</button>
+    <button id="revert">Undo changes</button>
+    <span id="saved"></span>
+    <span class="grow"></span>
+  </div>
+  <p class="help" style="color:var(--muted); font-size:13px">
+    Probe counts come from Bundesagentur, which is free to query. Adzuna is
+    not probed here — it bills against a small monthly allowance.
+    The previous config is kept as <code>config.yaml.bak</code>.
+  </p>
+{% endblock %}
+
+{% block script %}
+<script>
+(function () {
+  "use strict";
+
+  var VALUES = {{ values | tojson }};
+  var current = JSON.parse(JSON.stringify(VALUES));
+  var saved = document.getElementById("saved");
+
+  function post(url, body) {
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().then(function (d) {
+        if (!r.ok) { throw new Error(d.error || ("HTTP " + r.status)); }
+        return d;
+      });
+    });
+  }
+
+  function say(text, kind) {
+    saved.textContent = text || "";
+    saved.className = kind || "";
+  }
+
+  // --- list fields ------------------------------------------------------
+
+  function termRow(box, value, probeable) {
+    var row = document.createElement("div");
+    row.className = "term";
+
+    var input = document.createElement("input");
+    input.type = "text";
+    input.value = value || "";
+    row.appendChild(input);
+
+    var count = document.createElement("span");
+    count.className = "count";
+    row.appendChild(count);
+
+    if (probeable) {
+      var probe = document.createElement("button");
+      probe.type = "button";
+      probe.textContent = "Probe";
+      probe.addEventListener("click", function () { probeRow(row); });
+      row.appendChild(probe);
+    }
+
+    var remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.title = "Remove";
+    remove.addEventListener("click", function () { row.remove(); });
+    row.appendChild(remove);
+
+    // A term that changed no longer has a meaningful count against it.
+    input.addEventListener("input", function () {
+      count.textContent = "";
+      count.className = "count";
+    });
+
+    box.appendChild(row);
+    return row;
+  }
+
+  function probeRow(row) {
+    var term = row.querySelector("input").value.trim();
+    var count = row.querySelector(".count");
+    if (!term) { return Promise.resolve(); }
+    count.textContent = "…";
+    count.className = "count";
+    return post("/api/probe", {
+      query: term,
+      where: read("sources.arbeitsagentur.where"),
+      umkreis: read("sources.arbeitsagentur.umkreis"),
+      max_days_old: read("sources.arbeitsagentur.max_days_old"),
+      exclude_staffing: read("sources.arbeitsagentur.exclude_staffing")
+    }).then(function (d) {
+      count.textContent = d.count + " job(s)";
+      // A term matching thousands is not a search, it is the whole board.
+      count.className = "count " + (d.count === 0 ? "none"
+                        : d.count > 400 ? "wide" : "good");
+    }).catch(function (e) {
+      count.textContent = "failed";
+      count.className = "count none";
+      say(e.message, "bad");
+    });
+  }
+
+  // --- reading and writing the form ------------------------------------
+
+  function field(key) { return document.querySelector('.field[data-key="' + key + '"]'); }
+
+  function read(key) {
+    var el = field(key);
+    if (!el) { return null; }
+    var kind = el.dataset.kind;
+    if (kind === "list") {
+      return Array.prototype.map.call(
+        el.querySelectorAll(".term input"), function (i) { return i.value.trim(); }
+      ).filter(Boolean);
+    }
+    var input = el.querySelector("input");
+    if (kind === "bool") { return input.checked; }
+    if (kind === "int") { return input.value === "" ? null : Number(input.value); }
+    return input.value.trim();
+  }
+
+  function render(values) {
+    Object.keys(values).forEach(function (key) {
+      var el = field(key);
+      if (!el) { return; }
+      var kind = el.dataset.kind;
+      if (kind === "list") {
+        var box = el.querySelector(".terms");
+        box.innerHTML = "";
+        var probeable = key.indexOf("arbeitsagentur.queries") !== -1;
+        (values[key] || []).forEach(function (v) { termRow(box, v, probeable); });
+        return;
+      }
+      var input = el.querySelector("input");
+      if (kind === "bool") { input.checked = !!values[key]; }
+      else if (kind === "int") { input.value = values[key] === null ? "" : values[key]; }
+      else { input.value = values[key] || ""; }
+    });
+  }
+
+  function collect() {
+    var out = {};
+    Object.keys(VALUES).forEach(function (key) { out[key] = read(key); });
+    return out;
+  }
+
+  // --- wiring ------------------------------------------------------------
+
+  document.querySelectorAll(".field[data-kind=list]").forEach(function (el) {
+    var probeable = el.dataset.key.indexOf("arbeitsagentur.queries") !== -1;
+    el.querySelector(".add").addEventListener("click", function () {
+      var row = termRow(el.querySelector(".terms"), "", probeable);
+      row.querySelector("input").focus();
+    });
+    var all = el.querySelector(".probe-all");
+    if (all) {
+      all.addEventListener("click", function () {
+        all.disabled = true;
+        say("Probing…");
+        var rows = Array.prototype.slice.call(el.querySelectorAll(".term"));
+        // One at a time: the endpoint answers 429 to bursts.
+        rows.reduce(function (chain, row) {
+          return chain.then(function () { return probeRow(row); });
+        }, Promise.resolve()).then(function () {
+          all.disabled = false;
+          say("Probed " + rows.length + " term(s)", "ok");
+        });
+      });
+    }
+    el.querySelectorAll(".chip").forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        var row = termRow(el.querySelector(".terms"), chip.textContent.trim(), true);
+        probeRow(row);
+      });
+    });
+  });
+
+  document.getElementById("save").addEventListener("click", function () {
+    say("Saving…");
+    post("/api/settings", { values: collect() })
+      .then(function (d) {
+        current = d.values;
+        render(current);
+        if (!d.changed.length) { say("Nothing changed", ""); return; }
+        say("Saved " + d.changed.length + " change(s) — restart the dashboard "
+            + "for them to take effect", "ok");
+      })
+      .catch(function (e) { say(e.message, "bad"); });
+  });
+
+  document.getElementById("revert").addEventListener("click", function () {
+    render(current);
+    say("Reverted to what is on disk", "");
+  });
+
+  render(current);
+})();
+</script>
+{% endblock %}

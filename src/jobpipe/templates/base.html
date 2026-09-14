@@ -55,6 +55,7 @@
   <nav>
     <a href="{{ url_for('dashboard') }}" class="{{ 'on' if page == 'dashboard' }}">Dashboard</a>
     <a href="{{ url_for('review') }}" class="{{ 'on' if page == 'review' }}">Review queue</a>
+    <a href="{{ url_for('settings') }}" class="{{ 'on' if page == 'settings' }}">Settings</a>
     {% block nav_extra %}{% endblock %}
   </nav>
 

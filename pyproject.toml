@@ -8,6 +8,8 @@ dependencies = [
     "requests>=2.31",
     "PyYAML>=6.0",
     "Flask>=3.0",
+    # Round-trips config.yaml without discarding its comments.
+    "ruamel.yaml>=0.18",
 ]
 
 [project.optional-dependencies]

@@ -135,6 +135,23 @@ That exists because a job you approved before it was ever scored otherwise had
 no way to get one: `score` alone only looks at jobs with status `new`. Scoring
 one by name deliberately leaves its status alone, so an approval survives it.
 
+**Settings.** `/settings` edits the tunable half of `config.yaml` — search
+terms, filters, radius, score cut-off — without opening the file. Setup stays
+in the file: backends, paths and API credentials are not editable from a page,
+and a credential is never rendered into one.
+
+Each Bundesagentur term has a **Probe** button giving a live count, which is
+the point of the page. Tuning a query blind means running an ingest and a
+scoring pass to find out it was wrong; probing costs nothing and answers in a
+second. A term returning thousands is not a search, it is the whole board.
+
+The file is hand-maintained and its comments are half its documentation, so
+edits round-trip through ruamel rather than a plain dump, and the previous
+version is kept as `config.yaml.bak`. An edit is rendered, loaded to check it
+still parses, and only then swapped in — writing a config that cannot be read
+would break the command that could fix it. A change takes effect when the
+dashboard restarts, and the page says so.
+
 It runs commands. It does not make decisions — approving a job is still a
 click you make on the review page, and **Open & fill form** still stops at
 the filled form and hands you the browser.
@@ -540,7 +557,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-412 tests, no network. Source parsers run against recorded payload shapes,
+441 tests, no network. Source parsers run against recorded payload shapes,
 the tailoring pipeline runs end to end with the model call stubbed, and
 autofill is driven by a real headless Chromium against a synthetic ATS form
 covering every label shape. The job-board adapters have separately been

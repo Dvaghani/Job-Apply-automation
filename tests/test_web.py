@@ -394,3 +394,102 @@ def test_the_review_page_still_uses_the_redirecting_form(client, config):
     fp = seed(config, status=STATUS_SCORED)
     resp = client.post(f"/decide/{fp}", data={"action": "approve", "from": "scored"})
     assert resp.status_code == 302
+
+
+# -- the settings page ----------------------------------------------------
+
+
+@pytest.fixture
+def editable(tmp_path, runner):
+    """A client whose config is a real file the page can write to."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "min_score: 60\n"
+        "sources:\n"
+        "  arbeitsagentur:\n"
+        "    where: Chemnitz\n"
+        "    queries: [Softwareentwickler]\n"
+        "filters:\n"
+        "  title_exclude: [senior]\n"
+        f"db_path: {(tmp_path / 'jobs.db').as_posix()}\n"
+        f"profile_path: {(tmp_path / 'profile.md').as_posix()}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "profile.md").write_text("Background.", encoding="utf-8")
+    from jobpipe.config import load_config
+
+    app = web.create_app(load_config(path), runner=runner, token=TOKEN)
+    app.config["TESTING"] = True
+    return app.test_client(), path
+
+
+def test_settings_page_renders_every_group(editable):
+    client, _ = editable
+    page = client.get("/settings").get_data(as_text=True)
+    assert "Bundesagentur" in page
+    assert "Minimum score" in page
+    assert "Reject titles containing" in page
+
+
+def test_settings_page_does_not_render_credentials(editable):
+    """Rendering an API key into the page publishes it."""
+    client, _ = editable
+    page = client.get("/settings").get_data(as_text=True)
+    assert "app_key" not in page
+    assert "app_id" not in page
+
+
+def test_saving_writes_the_file(editable):
+    client, path = editable
+    resp = client.post("/api/settings", json={"values": {"min_score": 42}})
+    body = resp.get_json()
+    assert body["changed"] == ["min_score"]
+    assert body["restart_required"] is True
+    assert "min_score: 42" in path.read_text(encoding="utf-8")
+
+
+def test_saving_a_bad_value_is_a_400_and_changes_nothing(editable):
+    client, path = editable
+    before = path.read_text(encoding="utf-8")
+    resp = client.post("/api/settings", json={"values": {"min_score": 500}})
+    assert resp.status_code == 400
+    assert "at most" in resp.get_json()["error"]
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_saving_is_covered_by_the_origin_guard(editable):
+    client, path = editable
+    before = path.read_text(encoding="utf-8")
+    resp = client.post(
+        "/api/settings", json={"values": {"min_score": 10}},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert resp.status_code == 403
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_probe_reports_a_live_count(client, monkeypatch):
+    from jobpipe.sources import arbeitsagentur
+
+    monkeypatch.setattr(
+        arbeitsagentur, "search", lambda *a, **k: ([], 253)
+    )
+    body = client.post("/api/probe", json={"query": "Softwareentwickler"}).get_json()
+    assert body == {"query": "Softwareentwickler", "count": 253}
+
+
+def test_probe_needs_a_term(client):
+    assert client.post("/api/probe", json={"query": "  "}).status_code == 400
+
+
+def test_probe_reports_a_source_failure_without_a_traceback(client, monkeypatch):
+    from jobpipe.sources import arbeitsagentur
+    from jobpipe.sources.base import SourceError
+
+    def explode(*a, **k):
+        raise SourceError("HTTP 429")
+
+    monkeypatch.setattr(arbeitsagentur, "search", explode)
+    resp = client.post("/api/probe", json={"query": "x"})
+    assert resp.status_code == 502
+    assert "429" in resp.get_json()["error"]

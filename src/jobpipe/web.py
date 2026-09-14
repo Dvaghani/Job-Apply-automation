@@ -22,7 +22,7 @@ from flask import (
     Flask, jsonify, redirect, render_template, request, send_file, url_for
 )
 
-from . import db, extapi, tasks
+from . import db, extapi, settings as settings_mod, tasks
 from .config import Config
 from .models import (
     STATUS_APPLIED,
@@ -167,6 +167,16 @@ def create_app(
             approved=[_job_json(r) for r in db.by_status(conn(), STATUS_APPROVED)],
         )
 
+    @app.route("/settings")
+    def settings():
+        return render_template(
+            "settings.html",
+            page="settings",
+            groups=settings_mod.grouped(),
+            values=settings_mod.read(config.path),
+            config_path=str(extapi.Path(config.path).resolve()),
+        )
+
     @app.route("/review")
     def review():
         status = request.args.get("status", STATUS_SCORED)
@@ -252,6 +262,55 @@ def create_app(
         db.set_status(conn(), fingerprint, status)
         conn().commit()
         return jsonify(ok=True, **state_payload())
+
+    @app.post("/api/settings")
+    def api_settings():
+        """Apply an edit to config.yaml.
+
+        The running server keeps its own Config, loaded at startup, so a
+        saved change does not take effect until it restarts. Say so rather
+        than let the next Ingest quietly use the old terms.
+        """
+        body = request.get_json(silent=True) or {}
+        try:
+            changed = settings_mod.write(config.path, body.get("values") or {})
+        except settings_mod.SettingsError as exc:
+            return jsonify(error=str(exc)), 400
+        return jsonify(
+            ok=True,
+            changed=changed,
+            restart_required=bool(changed),
+            values=settings_mod.read(config.path),
+        )
+
+    @app.post("/api/probe")
+    def api_probe():
+        """Live count for one search term, so it can be judged before use.
+
+        Bundesagentur only: it is free and unmetered. Adzuna costs quota
+        from a small monthly allowance, which is not something a page should
+        spend on every keystroke.
+        """
+        from .sources import arbeitsagentur
+        from .sources.base import SourceError
+
+        body = request.get_json(silent=True) or {}
+        query = str(body.get("query") or "").strip()
+        if not query:
+            return jsonify(error="no search term"), 400
+
+        try:
+            _, found = arbeitsagentur.search(
+                query,
+                where=str(body.get("where") or ""),
+                radius_km=body.get("umkreis"),
+                max_days_old=body.get("max_days_old"),
+                exclude_staffing=bool(body.get("exclude_staffing", True)),
+                size=1,
+            )
+        except SourceError as exc:
+            return jsonify(error=str(exc)[:140]), 502
+        return jsonify(query=query, count=found)
 
     @app.get("/api/state")
     def api_state():
