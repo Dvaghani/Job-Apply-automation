@@ -184,14 +184,16 @@ def create_app(
             min_score=config.min_score,
         )
 
+    DECISIONS = {
+        "approve": STATUS_APPROVED,
+        "reject": STATUS_REJECTED,
+        "applied": STATUS_APPLIED,
+    }
+
     @app.post("/decide/<fingerprint>")
     def decide(fingerprint):
         action = request.form.get("action")
-        mapping = {
-            "approve": STATUS_APPROVED,
-            "reject": STATUS_REJECTED,
-            "applied": STATUS_APPLIED,
-        }
+        mapping = DECISIONS
         if action not in mapping:
             return "unknown action", 400
         db.set_status(conn(), fingerprint, mapping[action])
@@ -233,6 +235,23 @@ def create_app(
         except OSError as exc:
             return jsonify(error=f"could not open the folder: {exc}"), 500
         return jsonify(ok=True, folder=str(folder.resolve()))
+
+    @app.post("/api/decide/<fingerprint>")
+    def api_decide(fingerprint):
+        """Record a decision without navigating away.
+
+        The review page can afford a form post and a redirect. The dashboard
+        cannot: reloading it throws away whatever was set up in the command
+        panel, so marking a job applied would quietly reset the tailoring
+        language back to English.
+        """
+        body = request.get_json(silent=True) or {}
+        status = DECISIONS.get(body.get("action"))
+        if status is None:
+            return jsonify(error="unknown action"), 400
+        db.set_status(conn(), fingerprint, status)
+        conn().commit()
+        return jsonify(ok=True, **state_payload())
 
     @app.get("/api/state")
     def api_state():

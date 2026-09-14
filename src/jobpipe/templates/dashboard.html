@@ -328,10 +328,7 @@
             '<button class="act" data-cmd="score" data-job="' + fp + '">Score</button>' +
             '<button class="act" data-cmd="tailor" data-job="' + fp + '">Tailor</button>' +
             '<button class="act yes" data-cmd="apply" data-job="' + fp + '">Open &amp; fill form</button>' +
-            '<form method="post" action="/decide/' + fp + '" style="display:inline">' +
-              '<input type="hidden" name="from" value="dashboard">' +
-              '<button name="action" value="applied">Mark applied</button>' +
-            "</form>" +
+            '<button class="decide" data-job="' + fp + '">Mark applied</button>' +
           "</div>" +
         "</div></div>";
     }).join("");
@@ -449,6 +446,23 @@
   }
 
   // Log in, click through, get to the real form — then ask for the fill.
+  // Marking a job applied must not reload the page: a reload resets the
+  // command panel, and the tailoring language with it.
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button.decide");
+    if (!btn) { return; }
+    ev.preventDefault();
+    btn.disabled = true;
+    post("/api/decide/" + btn.dataset.job, { action: "applied" })
+      .then(function (d) {
+        state.stats = d.stats;
+        state.approved = d.approved;
+        renderTiles();
+        renderApproved();
+      })
+      .catch(function (e) { btn.disabled = false; errBox.textContent = e.message; });
+  });
+
   // Open the job's folder in Explorer — the shortest path from "the autofill
   // missed the upload box" to "here are the files".
   document.addEventListener("click", function (ev) {
@@ -470,6 +484,17 @@
   });
 
   // -- boot ------------------------------------------------------------
+
+  // The language outlives a reload. Wrapped because storage throws outright
+  // in a private window or with site data blocked.
+  var langSelect = document.getElementById("tailor-language");
+  try {
+    var saved = localStorage.getItem("jobpipe.language");
+    if (saved) { langSelect.value = saved; }
+  } catch (e) { /* no storage; the default stands */ }
+  langSelect.addEventListener("change", function () {
+    try { localStorage.setItem("jobpipe.language", langSelect.value); } catch (e) {}
+  });
 
   renderTiles();
   renderApproved();

@@ -351,3 +351,46 @@ def test_tailor_accepts_a_language_from_the_page(client, runner):
         "command": "tailor", "options": {"language": "de"},
     })
     assert runner.calls == [("tailor", {"language": "de"})]
+
+
+# -- deciding without losing the page -------------------------------------
+
+
+def test_decide_api_records_the_decision(client, config):
+    fp = seed(config)
+    body = client.post(f"/api/decide/{fp}", json={"action": "applied"}).get_json()
+    assert body["ok"] is True
+    conn = db.connect(config.db_path)
+    assert db.get(conn, fp)["status"] == "applied"
+
+
+def test_decide_api_returns_the_new_state_so_no_reload_is_needed(client, config):
+    """A reload would reset the command panel — and the tailoring language."""
+    fp = seed(config)
+    body = client.post(f"/api/decide/{fp}", json={"action": "applied"}).get_json()
+    assert body["stats"]["applied"] == 1
+    assert body["approved"] == []
+
+
+def test_decide_api_rejects_an_unknown_action(client, config):
+    fp = seed(config)
+    resp = client.post(f"/api/decide/{fp}", json={"action": "delete"})
+    assert resp.status_code == 400
+
+
+def test_decide_api_is_covered_by_the_origin_guard(client, config):
+    fp = seed(config)
+    resp = client.post(
+        f"/api/decide/{fp}", json={"action": "applied"},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert resp.status_code == 403
+    conn = db.connect(config.db_path)
+    assert db.get(conn, fp)["status"] == STATUS_APPROVED
+
+
+def test_the_review_page_still_uses_the_redirecting_form(client, config):
+    """Only the dashboard needs the async path; the review page can reload."""
+    fp = seed(config, status=STATUS_SCORED)
+    resp = client.post(f"/decide/{fp}", data={"action": "approve", "from": "scored"})
+    assert resp.status_code == 302
