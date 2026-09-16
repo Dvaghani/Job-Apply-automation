@@ -198,8 +198,14 @@ def render_markdown(resume: Resume, tailored, language: str = "en") -> str:
     if city:
         contact.append(city)
     for profile in b.get("profiles") or []:
-        if profile.get("url"):
-            contact.append(profile["url"])
+        url = profile.get("url")
+        if not url:
+            continue
+        # Labeled as plain text, never an icon or a bare unlabeled URL —
+        # an ATS parser (and a human skimming) should be able to tell
+        # LinkedIn from GitHub from the text alone, no image involved.
+        network = profile.get("network", "").strip()
+        contact.append(f"{network}: {url}" if network else url)
     contact = [c for c in contact if c]
     if contact:
         lines += ["", " · ".join(contact)]

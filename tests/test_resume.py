@@ -118,6 +118,26 @@ def test_render_includes_contact_and_education(master):
     assert "U of T" in md and "BSc" in md
 
 
+def test_profile_links_are_labeled_plain_text_not_bare_urls(master):
+    # ATS-friendly means no icon/image and no unlabeled URL — the network
+    # name must appear as visible text next to its link.
+    md = render_markdown(master, T([R(0, [B(0, "Built a ledger.")])]))
+    assert "GitHub: https://github.com/ada" in md
+    assert "<svg" not in md and "<img" not in md
+
+
+def test_profile_without_a_network_name_falls_back_to_a_bare_link(tmp_path):
+    data = dict(MASTER)
+    data["basics"] = dict(MASTER["basics"])
+    data["basics"]["profiles"] = [{"url": "https://example.dev/ada"}]
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps(data))
+    resume = load(path)
+    md = render_markdown(resume, T([R(0, [B(0, "Built a ledger.")])]))
+    assert "https://example.dev/ada" in md
+    assert ": https://example.dev/ada" not in md
+
+
 def test_html_escapes_user_content(tmp_path):
     data = dict(MASTER)
     data["work"] = [{"name": "A<script>", "position": "P", "highlights": ["x"]}]
