@@ -17,6 +17,13 @@ cli_timeout: 300
 agy_model: gemini-3.8-flash-high
 agy_timeout: 600
 
+# How many jobs to score at once. Each call is its own process or HTTP
+# request, so the waiting overlaps — and on a CLI backend, most of a single
+# call is that process starting up. Measured against `agy`: 10 at a time
+# scored 10 of 10 jobs; 15 at a time only got through 8, wasting the rest.
+# Start low and raise it until calls start failing.
+concurrency: 4
+
 sources:
   # Greenhouse board tokens. Find one in a company's board URL:
   #   https://boards.greenhouse.io/<token>  ->  the token

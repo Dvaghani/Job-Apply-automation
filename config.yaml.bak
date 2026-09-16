@@ -75,8 +75,8 @@ sources:
   # Narrow queries on purpose — broad ones are where the noise came from.
   # Free key (1,000 calls/month): https://developer.adzuna.com/
   adzuna:
-    app_id: your-app-id-here
-    app_key: your-key-here
+    app_id: 1ef81c4f
+    app_key: e81218b6eba83762bf95ea17d4904e10
     country: de
     where: "Chemnitz"
     distance: 100           # km — this is the big one
