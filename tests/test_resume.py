@@ -452,7 +452,21 @@ def test_a_long_project_description_is_not_dropped(tmp_path):
     assert r"p{0.8\textwidth}" in out
 
 
-def test_profile_links_get_their_own_icons(master):
+def test_profile_links_show_the_url_not_a_generic_label(master):
+    # An icon glyph followed by the bare word "GitHub" put nothing
+    # ATS-readable on the page: a PDF text extractor reads the visible
+    # glyph stream, never a \href target, so "GitHub" alone told a parser
+    # nothing about which profile it was. No icon, and the visible text
+    # is the URL itself.
     out = tex(master)
-    assert r"\faGithub" in out
-    assert "https://github.com/ada" in out
+    assert r"\faGithub" not in out
+    assert r"\href{https://github.com/ada}" in out
+    assert r"\underline{github.com/ada}" in out
+
+
+def test_profile_link_display_text_drops_scheme_and_trailing_slash(master):
+    from jobpipe.resume import _display_url
+
+    assert _display_url("https://github.com/ada") == "github.com/ada"
+    assert _display_url("https://www.linkedin.com/in/ada/") == "www.linkedin.com/in/ada"
+    assert _display_url("http://example.dev") == "example.dev"

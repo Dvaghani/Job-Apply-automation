@@ -9,6 +9,7 @@ the bullets are addressable.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -378,8 +379,6 @@ def _escape(text: str) -> str:
 
 def _inline(text: str) -> str:
     """Escape, then apply **bold** and *italic*."""
-    import re
-
     out = _escape(text)
     out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", out)
     out = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"<em>\1</em>", out)
@@ -615,28 +614,27 @@ _LATEX_PREAMBLE = r"""%-------------------------
 # babel's language name, not the config's two-letter code.
 _BABEL = {"en": "english", "de": "ngerman"}
 
-# The icon for each profile network. Anything not listed gets a globe, which
-# is better than dropping a link the master asked to show.
-_PROFILE_ICONS = {
-    "linkedin": r"\faLinkedin",
-    "github": r"\faGithub",
-    "gitlab": r"\faGitlab",
-    "xing": r"\faXing",
-}
+def _display_url(url: str) -> str:
+    """The scheme-free form a resume shows: github.com/x, not https://github.com/x/.
+
+    "https://" is redundant on a printed resume and, worse, an icon-font
+    glyph in front of a generic word like "LinkedIn" is what this function
+    replaces — a PDF text extractor reads the glyph stream, not the
+    `\\href` target, so "LinkedIn" alone told an ATS nothing. The domain
+    and path are the only part worth showing: self-describing as LinkedIn
+    vs. GitHub, and the one piece of information a recruiter or parser can
+    actually use.
+    """
+    return re.sub(r"^https?://", "", url.strip()).rstrip("/")
 
 
 def _profile_link(profile: dict) -> str:
-    """One icon + underlined label, linked to the profile URL."""
+    """The profile URL itself, underlined and linked — no icon, no label."""
     url = (profile.get("url") or "").strip()
     if not url:
         return ""
-    network = (profile.get("network") or "").strip()
-    icon = _PROFILE_ICONS.get(network.lower(), r"\faGlobe")
-    label = latex_escape(network or url)
-    return (
-        f"\\href{{{latex_escape(url)}}}"
-        f"{{\\raisebox{{-0.2\\height}}{icon}\\ \\underline{{{label}}}}}"
-    )
+    shown = latex_escape(_display_url(url))
+    return f"\\href{{{latex_escape(url)}}}{{\\underline{{{shown}}}}}"
 
 
 def _latex_header(resume: Resume, photo: str) -> list[str]:
