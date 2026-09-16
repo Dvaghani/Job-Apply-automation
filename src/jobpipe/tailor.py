@@ -77,6 +77,12 @@ project whose substance already appears in a role bullet: repeating it costs \
 a third of a page and tells the reader nothing new. Drop the housekeeping a \
 master collects — registered titles, department names, submission dates — \
 none of it is read.
+- **If a project's master highlights include the concrete result it was \
+measured against — an accuracy figure, an error rate, a validated \
+tolerance, a benchmark score — keep that bullet ahead of ones describing \
+process or engineering steps**, even for a posting where the rest of the \
+project reads as background. A project that only lists what was built and \
+never what it achieved reads as unfinished work, whatever else it says.
 - Aim for two pages. Education and languages are printed in full from the \
 master, so the length you control is the bullets: cut harder rather than keep \
 a weak one.
