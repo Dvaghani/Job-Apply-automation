@@ -12,7 +12,13 @@ resume.json
 # Per-language masters: resume.de.json and friends.
 resume.*.json
 applicant.yaml
+# Headshot for the resume header.
+photo.jpg
+photo.jpeg
+photo.png
 applications/
+/Job application
+
 *.db
 # SQLite's write-ahead log sits beside the database and is not matched
 # by *.db.
@@ -28,3 +34,6 @@ jobpipe-setup*.zip
 
 # Extension token — a local secret, not shared.
 .jobpipe-token
+resume.json.bak
+WHERE-THIS-CAME-FROM.txt
+profile.md.bak

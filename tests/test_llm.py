@@ -230,3 +230,126 @@ def test_a_parse_error_shows_the_text_around_it():
     """A character offset alone says nothing in 4,000 characters of prose."""
     with pytest.raises(LLMError, match="near:"):
         extract_json('{"a": "b",, }')
+
+
+# --- Antigravity CLI backend ----------------------------------------------
+
+def agy(monkeypatch):
+    monkeypatch.setattr(llm.shutil, "which", lambda name: "/usr/bin/agy")
+    return llm.AntigravityCliBackend("gemini-3.8-flash-high")
+
+
+def test_agy_parses_a_good_response(monkeypatch):
+    backend = agy(monkeypatch)
+    envelope = json.dumps({
+        "conversation_id": "abc",
+        "status": "SUCCESS",
+        "response": '{"score": 45, "reason": "thin"}\n',
+    })
+    monkeypatch.setattr(llm.subprocess, "run", fake_run(envelope))
+    got = backend.complete("sys", "prompt", Shape)
+    assert got.score == 45 and got.reason == "thin"
+
+
+def test_agy_attaches_the_prompt_to_the_flag(monkeypatch):
+    """Passed as a separate argument the CLI takes the next flag as its prompt."""
+    backend = agy(monkeypatch)
+    captured = {}
+
+    def run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(
+            cmd, 0,
+            stdout=json.dumps({
+                "status": "SUCCESS", "response": '{"score": 1, "reason": "x"}'
+            }),
+            stderr="",
+        )
+
+    monkeypatch.setattr(llm.subprocess, "run", run)
+    backend.complete("sys", "prompt", Shape)
+
+    prompts = [a for a in captured["cmd"] if a.startswith("--print=")]
+    assert len(prompts) == 1
+    assert "prompt" in prompts[0] and "sys" in prompts[0]
+    # the schema has to reach the model, since --json-schema cannot be used
+    assert "score" in prompts[0]
+    assert "-p" not in captured["cmd"]
+    # untrusted posting text must not be expanded as slash commands
+    assert "--disable-slash-commands" in captured["cmd"]
+    assert "--model" in captured["cmd"]
+
+
+def test_agy_surfaces_a_failed_status(monkeypatch):
+    backend = agy(monkeypatch)
+    envelope = json.dumps({"status": "ERROR", "response": "quota exhausted"})
+    monkeypatch.setattr(llm.subprocess, "run", fake_run(envelope))
+    with pytest.raises(LLMError, match="ERROR"):
+        backend.complete("sys", "prompt", Shape)
+
+
+def test_agy_explains_a_silent_nonzero_exit(monkeypatch):
+    """The CLI exits non-zero with both streams empty when it cannot write."""
+    backend = agy(monkeypatch)
+    monkeypatch.setattr(llm.subprocess, "run", fake_run("", returncode=2))
+    with pytest.raises(LLMError, match="no output at all"):
+        backend.complete("sys", "prompt", Shape)
+
+
+def test_agy_needs_the_binary(monkeypatch):
+    monkeypatch.setattr(llm.shutil, "which", lambda name: None)
+    with pytest.raises(LLMError, match="not on PATH"):
+        llm.AntigravityCliBackend("gemini-3.8-flash-high")
+
+
+def test_build_selects_the_antigravity_backend(monkeypatch):
+    monkeypatch.setattr(llm.shutil, "which", lambda name: "/usr/bin/agy")
+
+    class Cfg:
+        backend = "antigravity"
+        model = "claude-opus-5"
+        cli_model = "sonnet"
+        cli_timeout = 300
+        agy_model = "gemini-3.8-flash-high"
+        agy_timeout = 600
+
+    backend = llm.build(Cfg())
+    assert backend.name == "antigravity"
+    assert backend.model == "gemini-3.8-flash-high"
+    assert backend.timeout == 600
+
+
+def test_agy_keeps_a_valid_answer_marked_error(monkeypatch):
+    """At high concurrency a complete answer arrives with the turn ERRORed.
+
+    The status covers the CLI's own bookkeeping as well as the model, so it
+    can fail after the answer exists. Parsing is the real check.
+    """
+    backend = agy(monkeypatch)
+    envelope = json.dumps({
+        "status": "ERROR",
+        "response": '{"score": 62, "reason": "solid"}\n',
+    })
+    monkeypatch.setattr(llm.subprocess, "run", fake_run(envelope))
+    got = backend.complete("sys", "prompt", Shape)
+    assert got.score == 62 and got.reason == "solid"
+
+
+def test_agy_still_rejects_a_truncated_answer(monkeypatch):
+    """A reply cut off mid-generation cannot satisfy the schema."""
+    backend = agy(monkeypatch)
+    envelope = json.dumps({
+        "status": "ERROR",
+        "response": '{"score": 62, "reason": "it was going fine until',
+    })
+    monkeypatch.setattr(llm.subprocess, "run", fake_run(envelope))
+    with pytest.raises(LLMError, match="ERROR"):
+        backend.complete("sys", "prompt", Shape)
+
+
+def test_agy_rejects_a_wrong_shape_even_when_successful(monkeypatch):
+    backend = agy(monkeypatch)
+    envelope = json.dumps({"status": "SUCCESS", "response": '{"score": "high"}'})
+    monkeypatch.setattr(llm.subprocess, "run", fake_run(envelope))
+    with pytest.raises(LLMError, match="not usable"):
+        backend.complete("sys", "prompt", Shape)

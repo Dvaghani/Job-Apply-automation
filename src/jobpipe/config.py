@@ -17,10 +17,15 @@ DEFAULT_PROFILE_PATH = Path("profile.md")
 DEFAULT_MODEL = "claude-opus-5"
 
 # Backend default. "claude-cli" runs on a Claude Pro/Max subscription via the
-# Claude Code CLI; "api" needs ANTHROPIC_API_KEY and separate API credits.
+# Claude Code CLI; "antigravity" runs Gemini on a Google account via the
+# Antigravity CLI; "api" needs ANTHROPIC_API_KEY and separate API credits.
 DEFAULT_BACKEND = "api"
+BACKENDS = ("claude-cli", "antigravity", "api")
 # The CLI takes aliases (opus/sonnet/haiku) rather than full model ids.
 DEFAULT_CLI_MODEL = "sonnet"
+# `agy models` lists the ids. Reasoning effort is part of the id rather than
+# a separate flag, so -high is a model choice, not a setting beside it.
+DEFAULT_AGY_MODEL = "gemini-3.8-flash-high"
 
 
 class ConfigError(RuntimeError):
@@ -50,6 +55,15 @@ class Config:
     backend: str = DEFAULT_BACKEND
     cli_model: str = DEFAULT_CLI_MODEL
     cli_timeout: int = 300
+    # How many jobs to score at once. Each call is its own subprocess or HTTP
+    # request, so the wait overlaps — the CLI backends spend most of a call
+    # starting up, and that is the part this hides. Too high and the backend
+    # starts refusing on rate limits or quota.
+    concurrency: int = 4
+    agy_model: str = DEFAULT_AGY_MODEL
+    # Roomier than the Claude CLI's: `agy` sends a large system prompt of its
+    # own before ours, so even a short call runs to tens of seconds.
+    agy_timeout: int = 600
     min_score: int = 60
     db_path: str = "jobs.db"
     profile_path: str = str(DEFAULT_PROFILE_PATH)
@@ -58,8 +72,26 @@ class Config:
     resume_paths: dict = field(default_factory=dict)
     applicant_path: str = "applicant.yaml"
     output_dir: str = "applications"
+    # Headshot for the resume header. Copied into each application folder
+    # beside the .tex, so the folder compiles anywhere. Empty, or a path
+    # that does not exist, leaves a placeholder box in its place.
+    photo_path: str = "photo.jpg"
     raw: dict = field(default_factory=dict)
     path: str = ""
+
+    @property
+    def active_model(self) -> str:
+        """The model the current backend will actually use.
+
+        Each backend names its model in its own field, so `model` alone is
+        the API's and says nothing about a run on either CLI.
+        """
+        backend = (self.backend or "api").lower()
+        if backend in {"claude-cli", "claude-code", "cli"}:
+            return self.cli_model
+        if backend in {"antigravity", "antigravity-cli", "agy"}:
+            return self.agy_model
+        return self.model
 
     @property
     def greenhouse_boards(self) -> list[str]:
@@ -176,6 +208,9 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         backend=(data.get("backend") or DEFAULT_BACKEND).lower(),
         cli_model=data.get("cli_model") or DEFAULT_CLI_MODEL,
         cli_timeout=int(data.get("cli_timeout", 300)),
+        concurrency=max(1, int(data.get("concurrency", 4))),
+        agy_model=data.get("agy_model") or DEFAULT_AGY_MODEL,
+        agy_timeout=int(data.get("agy_timeout", 600)),
         min_score=int(data.get("min_score", 60)),
         db_path=data.get("db_path") or "jobs.db",
         profile_path=data.get("profile_path") or str(DEFAULT_PROFILE_PATH),
@@ -184,6 +219,10 @@ def load_config(path: str | os.PathLike | None = None) -> Config:
         resume_paths=data.get("resume_paths") or {},
         applicant_path=data.get("applicant_path") or "applicant.yaml",
         output_dir=data.get("output_dir") or "applications",
+        photo_path=(
+            "" if data.get("photo_path") is False
+            else (data.get("photo_path") or "photo.jpg")
+        ),
         raw=data,
         path=str(cfg_path),
     )

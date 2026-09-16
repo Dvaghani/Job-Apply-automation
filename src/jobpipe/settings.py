@@ -1,8 +1,14 @@
 """Reading and writing the tunable parts of config.yaml.
 
-Only the parts worth tuning from a page: what to search for, what to throw
-away, and the score cut-off. Setup — backends, file paths, API credentials —
-stays in the file, where changing it is a deliberate act.
+Only the parts worth tuning from a page: which model runs the pipeline,
+what to search for, what to throw away, and the score cut-off. The rest of
+setup — file paths, API credentials — stays in the file, where changing it
+is a deliberate act.
+
+Which backend to use is on the page because it is a thing you switch, not a
+thing you set up once: it names a CLI that is either installed or not, and
+naming one reveals nothing. The credentials behind it stay where they were —
+a key is never read out, and no backend is configured from here.
 
 Credentials are never read out to the browser. A page that renders an API
 key into its own HTML has published it to anything that can see the page.
@@ -22,7 +28,13 @@ from pathlib import Path
 
 from ruamel.yaml import YAML, YAMLError
 
-from .config import ConfigError, load_config
+from .config import (
+    DEFAULT_AGY_MODEL,
+    DEFAULT_BACKEND,
+    DEFAULT_CLI_MODEL,
+    ConfigError,
+    load_config,
+)
 
 
 @dataclass(frozen=True)
@@ -31,12 +43,17 @@ class Setting:
 
     path: tuple[str, ...]
     label: str
-    kind: str          # "list" | "text" | "int" | "bool"
+    kind: str          # "list" | "text" | "int" | "bool" | "choice"
     group: str
     help: str = ""
     minimum: int | None = None
     maximum: int | None = None
     placeholder: str = ""
+    # For "choice": (stored value, label shown) pairs, in display order.
+    choices: tuple[tuple[str, str], ...] = ()
+    # Shown when the key is absent from the file. The point is that the page
+    # reports what the pipeline would actually use, not an empty box.
+    default: str = ""
 
     @property
     def key(self) -> str:
@@ -44,6 +61,50 @@ class Setting:
 
 
 SETTINGS: list[Setting] = [
+    # -- which model does the scoring and tailoring ---------------------
+    Setting(
+        ("backend",), "Backend", "choice", "Model",
+        "Which model runs scoring and tailoring, and how it is billed. "
+        "Both CLI backends need their own CLI installed and signed in; "
+        "neither needs an API key. Takes effect when the dashboard restarts.",
+        choices=(
+            ("claude-cli", "Claude Code CLI — runs on a Claude Pro/Max plan"),
+            ("antigravity", "Antigravity CLI — runs Gemini on a Google account"),
+            ("api", "Anthropic API — needs ANTHROPIC_API_KEY and credits"),
+        ),
+        default=DEFAULT_BACKEND,
+    ),
+    Setting(
+        ("cli_model",), "Claude CLI model", "text", "Model",
+        "An alias — opus, sonnet or haiku. Only used by the Claude Code CLI "
+        "backend.", placeholder="sonnet", default=DEFAULT_CLI_MODEL,
+    ),
+    Setting(
+        ("agy_model",), "Antigravity model", "choice", "Model",
+        "Reasoning effort is part of the model id here rather than a separate "
+        "setting. Run `agy models` for the current list. Only used by the "
+        "Antigravity backend.",
+        choices=(
+            ("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
+            ("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"),
+            ("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
+            ("gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"),
+            ("gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)"),
+            ("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"),
+            ("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"),
+        ),
+        default=DEFAULT_AGY_MODEL,
+    ),
+
+    Setting(
+        ("concurrency",), "Parallel workers", "int", "Model",
+        "How many jobs to score at once. Each call is its own process, so the "
+        "waiting overlaps — and on the CLI backends most of a call is startup. "
+        "Raise it to go faster, lower it if the backend starts refusing on "
+        "rate limits or quota.",
+        minimum=1, maximum=16, default="4",
+    ),
+
     # -- what reaches the review queue ---------------------------------
     Setting(
         ("min_score",), "Minimum score", "int", "Review",
@@ -146,7 +207,7 @@ SETTINGS: list[Setting] = [
 BY_KEY = {s.key: s for s in SETTINGS}
 
 GROUP_ORDER = [
-    "Review", "Bundesagentur für Arbeit", "Adzuna", "Arbeitnow",
+    "Model", "Review", "Bundesagentur für Arbeit", "Adzuna", "Arbeitnow",
     "GermanTechJobs", "Watchlist", "Filters",
 ]
 
@@ -187,9 +248,24 @@ def read(config_path: str | Path) -> dict:
         elif setting.kind == "bool":
             out[setting.key] = bool(value)
         elif setting.kind == "int":
-            out[setting.key] = value if isinstance(value, int) else None
+            if isinstance(value, int):
+                out[setting.key] = value
+            else:
+                # Same reason as a choice: an absent key shows the default in
+                # force, not a blank. A setting with no default is genuinely
+                # unset, and shows as such.
+                out[setting.key] = int(setting.default) if setting.default else None
+        elif setting.kind == "choice":
+            # An absent key shows the default the pipeline would fall back to,
+            # so the page reports what is actually in force. A value the file
+            # carries but this page does not offer is shown as-is rather than
+            # snapped to the first option — the file is hand-editable and may
+            # be ahead of this list.
+            out[setting.key] = str(value) if value is not None else setting.default
         else:
-            out[setting.key] = "" if value is None else str(value)
+            out[setting.key] = (
+                str(value) if value is not None else setting.default
+            )
     return out
 
 
@@ -205,6 +281,15 @@ def _clean(setting: Setting, raw):
 
     if setting.kind == "bool":
         return bool(raw)
+
+    if setting.kind == "choice":
+        value = str(raw or "").strip()
+        allowed = {v for v, _ in setting.choices}
+        if value not in allowed:
+            raise SettingsError(
+                f"{setting.label} must be one of: {', '.join(sorted(allowed))}"
+            )
+        return value
 
     if setting.kind == "int":
         if raw in (None, ""):
@@ -265,6 +350,12 @@ def write(config_path: str | Path, values: dict) -> list[str]:
     changed = []
     for key, raw in values.items():
         setting = BY_KEY[key]
+        # Validate what changed, not what was merely sent back. The page
+        # submits every field on every save, and a value hand-written into
+        # the file that this page does not list is still that file's
+        # business — refusing it would make the page unable to save at all.
+        if raw == current.get(key):
+            continue
         cleaned = _clean(setting, raw)
         if cleaned != current.get(key):
             changed.append(key)

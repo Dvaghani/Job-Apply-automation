@@ -173,3 +173,11 @@ def test_a_windows_path_already_in_the_database_still_resolves(tmp_path, monkeyp
 def test_an_untailored_job_has_no_folder():
     assert extapi.job_folder({"output_dir": None}) is None
     assert extapi.job_folder(None) is None
+
+
+def test_the_headshot_travels_with_the_setup(tmp_path, monkeypatch):
+    """Without it the new machine's resumes lose the photo, silently."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "photo.jpg").write_bytes(b"stub")
+    cfg = Config(path="config.yaml", photo_path="photo.jpg", db_path="jobs.db")
+    assert Path("photo.jpg") in portable.collect(cfg)

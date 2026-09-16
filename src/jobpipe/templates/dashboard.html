@@ -125,6 +125,8 @@
         <label>at most
           <input type="number" min="1" max="10000" id="score-limit" placeholder="all">
           jobs</label>
+        <label><input type="checkbox" id="score-rescore"> rescore ones already
+          scored — after editing profile.md. Keeps statuses.</label>
       </div>
     </div>
 
@@ -410,7 +412,12 @@
     var o = {};
     if (job) { o.jobs = [job]; }
     if (cmd === "run") { o.limit = document.getElementById("run-limit").value; }
-    if (cmd === "score") { o.limit = document.getElementById("score-limit").value; }
+    if (cmd === "score") {
+      o.limit = document.getElementById("score-limit").value;
+      // Not when a job is named: that button rescores that one job, and
+      // sending both would ask for two different things at once.
+      if (!job) { o.rescore = document.getElementById("score-rescore").checked; }
+    }
     if (cmd === "tailor") {
       o.no_cover_letter = document.getElementById("tailor-nocover").checked;
       o.strict = document.getElementById("tailor-strict").checked;

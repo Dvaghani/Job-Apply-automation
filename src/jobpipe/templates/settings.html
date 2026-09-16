@@ -20,10 +20,11 @@
   .field .help { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
   .field .control { margin-top: 8px; }
 
-  input[type=text], input[type=number] {
+  input[type=text], input[type=number], select {
     font: inherit; font-size: 13px; padding: 5px 9px; color: var(--fg);
     background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
   input[type=text] { width: 100%; max-width: 460px; }
+  select { width: 100%; max-width: 460px; }
   input[type=number] { width: 110px; }
   input.bad { border-color: #ef4444; }
 
@@ -83,6 +84,12 @@
               <label style="font-weight:400; display:inline-flex; gap:6px; align-items:center">
                 <input type="checkbox" id="f-{{ s.key }}"> enabled
               </label>
+            {% elif s.kind == 'choice' %}
+              <select id="f-{{ s.key }}">
+                {% for value, label in s.choices %}
+                  <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+              </select>
             {% elif s.kind == 'int' %}
               <input type="number" id="f-{{ s.key }}"
                      {% if s.minimum is not none %}min="{{ s.minimum }}"{% endif %}
@@ -214,6 +221,7 @@
         el.querySelectorAll(".term input"), function (i) { return i.value.trim(); }
       ).filter(Boolean);
     }
+    if (kind === "choice") { return el.querySelector("select").value; }
     var input = el.querySelector("input");
     if (kind === "bool") { return input.checked; }
     if (kind === "int") { return input.value === "" ? null : Number(input.value); }
@@ -230,6 +238,21 @@
         box.innerHTML = "";
         var probeable = key.indexOf("arbeitsagentur.queries") !== -1;
         (values[key] || []).forEach(function (v) { termRow(box, v, probeable); });
+        return;
+      }
+      if (kind === "choice") {
+        var select = el.querySelector("select");
+        var wanted = values[key] || "";
+        // A value the file carries that this page does not list is added as
+        // an option rather than dropped, so saving cannot rewrite it away.
+        if (wanted && !Array.prototype.some.call(
+              select.options, function (o) { return o.value === wanted; })) {
+          var extra = document.createElement("option");
+          extra.value = wanted;
+          extra.textContent = wanted + " (from config.yaml)";
+          select.appendChild(extra);
+        }
+        select.value = wanted;
         return;
       }
       var input = el.querySelector("input");

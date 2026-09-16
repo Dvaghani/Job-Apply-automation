@@ -27,6 +27,7 @@ PERSONAL_FILES = [
     ("profile.md", "profile_path", "your background, for scoring"),
     ("resume.json", "resume_path", "master resume"),
     ("applicant.yaml", "applicant_path", "form answers"),
+    ("photo.jpg", "photo_path", "headshot for the resume header"),
 ]
 
 # Not carried over: .jobpipe-token. A secret is better regenerated on the new

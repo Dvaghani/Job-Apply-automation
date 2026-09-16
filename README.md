@@ -46,12 +46,25 @@ cp applicant.example.yaml applicant.yaml   # your details, for filling forms
 pip install -e ".[browser]" && playwright install chromium   # for `apply`
 ```
 
+**For the LaTeX resume**, install TeX Live — `pdflatex` plus the
+`fontawesome5` and `microtype` packages:
+
+```bash
+sudo dnf install texlive-scheme-medium    # Fedora
+sudo apt install texlive-latex-recommended texlive-fonts-extra   # Debian/Ubuntu
+```
+
+Optional. Without it the resume is rendered from HTML instead, and
+`jobpipe doctor` says so. Put your headshot at `photo.jpg` in this folder
+(or set `photo_path:`) — portrait crop, around 600x760 px.
+
 **Then pick a model backend** — this decides how scoring and tailoring reach
-Claude, and they bill differently:
+a model, and they bill differently:
 
 | `backend:` | Needs | Use when |
 |---|---|---|
 | `claude-cli` | Claude Code installed and signed in | You have **Claude Pro or Max**. Runs on the subscription. |
+| `antigravity` | Antigravity CLI (`agy`) installed and signed in | You want Gemini, on a Google account. No key. |
 | `api` | `ANTHROPIC_API_KEY` + API credits | You have API billing set up. |
 
 A Claude Pro subscription does **not** include API access — those are
@@ -60,6 +73,27 @@ separate products, billed separately. If Pro is what you have, use
 needs no key at all. It's slower (a fresh process per call, roughly 8
 seconds a job) and it consumes your Pro usage allowance, so watch the
 volume on a large watchlist.
+
+`antigravity` is the same trade against a different model. It shells out to
+`agy --print=…` and runs on whatever plan the CLI is signed in to, so it also
+needs no key. Reasoning effort is part of the model id rather than a flag
+beside it — `gemini-3.8-flash-high` is the default, and `agy models` lists
+the rest, which includes Gemini Pro and some Claude models too. Reckon on
+15–45 seconds a call: `agy` sends a large system prompt of its own ahead of
+ours, so a short prompt is never a short call, and `agy_timeout` is 600 to
+match.
+
+Two things it deliberately does not do. It does not use `--json-schema`,
+because that binds the schema to the agent's own completion report rather
+than to the answer and returns a summary of the task instead of the score
+you asked for; the schema goes in the prompt instead, as it does for
+`claude-cli`. And it passes `--disable-slash-commands`, because a job
+description is untrusted text that reaches the prompt verbatim — without it,
+a posting containing a `/word` is expanded as a slash command before the
+model sees it.
+
+Switch backends from `/settings` on the dashboard, or in `config.yaml`. The
+change takes effect when the dashboard restarts.
 
 `config.yaml`, `profile.md`, `resume.json`, `applicant.yaml` and
 `applications/` are all gitignored — they're personal.
@@ -136,10 +170,34 @@ That exists because a job you approved before it was ever scored otherwise had
 no way to get one: `score` alone only looks at jobs with status `new`. Scoring
 one by name deliberately leaves its status alone, so an approval survives it.
 
-**Settings.** `/settings` edits the tunable half of `config.yaml` — search
-terms, filters, radius, score cut-off — without opening the file. Setup stays
-in the file: backends, paths and API credentials are not editable from a page,
-and a credential is never rendered into one.
+**Rescoring everything.** Every score is a function of `profile.md`, so every
+score goes stale the moment you edit it. The **rescore ones already scored**
+box beside the deck's Score button — or `jobpipe score --rescore` — scores
+every live job again, `scored` and `approved` alike, and keeps each status.
+Pair it with a limit the first time.
+
+**Jobs are scored several at a time.** `concurrency:` (default 4, and on the
+settings page as **Parallel workers**) sets how many. Jobs are independent and
+every backend is a fresh process or one HTTP call per job, so the waiting
+overlaps. It matters most on the CLI backends, where a large part of each call
+is the CLI starting up — about twenty seconds of it for `agy`, which is pure
+overhead that parallelises away. Lower it if the backend starts refusing on
+rate limits or quota.
+
+Only the model call is threaded. The sqlite connection belongs to the thread
+that opened it, and each score is committed as it lands rather than in a batch
+at the end — scoring costs money, and a crash must not lose what was paid for.
+
+Naming a job wins over the rescore box, so the per-job **Score** button still
+rescores just that job whether or not the box is ticked.
+
+**Settings.** `/settings` edits the tunable half of `config.yaml` — which
+backend and model run the pipeline, search terms, filters, radius, score
+cut-off — without opening the file. Paths and API credentials are not
+editable from a page, and a credential is never rendered into one. The
+backend is on the page because it is a thing you switch rather than set up
+once: it names a CLI that is either installed or not, and naming one reveals
+nothing.
 
 Each Bundesagentur term has a **Probe** button giving a live count, which is
 the point of the page. Tuning a query blind means running an ingest and a
@@ -333,11 +391,31 @@ is why they need no verification pass, and why they are safe to include in
 full. Output lands in `applications/<company>-<title>/`:
 
 ```
-resume.md        tailored resume
-resume.html      same, print-to-PDF styled
+resume.tex       tailored resume, LaTeX source
+resume.pdf       compiled from it — this is the one that gets uploaded
+photo.jpg        your headshot, copied in so the folder compiles anywhere
+resume.md        the same content as plain text, for reading the diff
+resume.html      the same again, and the PDF fallback when TeX is missing
 cover-letter.md  ~200 words, or omit with --no-cover-letter
 NOTES.md         matched keywords, honest gaps, and the verification result
 ```
+
+**The resume is LaTeX.** `resume.tex` is written for every job and compiled
+with `pdflatex`; that PDF is what a form uploads and what the dashboard
+links to. The layout follows [sb2nov/resume](https://github.com/sb2nov/resume)
+with a two-column header, so a headshot sits beside the contact block — the
+convention on a German *Lebenslauf* and harmless elsewhere. Point
+`photo_path:` in `config.yaml` at a jpg, png or pdf; leave the file missing
+and the header prints an empty box instead of failing.
+
+The .tex is generated, not hand-maintained — edit `resume.json` or the
+renderer in `src/jobpipe/resume.py` and regenerate. But it is a normal
+LaTeX file, so a one-off tweak before sending is just an edit and a
+`pdflatex resume.tex` in that folder.
+
+Without TeX installed nothing breaks: `write_outputs` falls back to
+rendering the HTML to PDF through Chromium, which is what it always did.
+`jobpipe doctor` tells you which of the two you are getting.
 
 **Applying in German.** `--language de`, or the picker on the dashboard,
 writes the resume and cover letter in German — headings included, so it reads

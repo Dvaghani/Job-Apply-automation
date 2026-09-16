@@ -1,12 +1,21 @@
 # Copy to config.yaml and edit. config.yaml is gitignored — it's yours.
 
-# How scoring and tailoring reach Claude.
-#   claude-cli  runs on a Claude Pro/Max subscription via the Claude Code CLI
-#   api         needs ANTHROPIC_API_KEY and separate API credits
+# How scoring and tailoring reach a model. Switchable from /settings.
+#   claude-cli   runs on a Claude Pro/Max subscription via the Claude Code CLI
+#   antigravity  runs Gemini on a Google account via the Antigravity CLI (agy)
+#   api          needs ANTHROPIC_API_KEY and separate API credits
 # Claude Pro does NOT include API access — if Pro is what you have, use claude-cli.
+# Both CLI backends need their CLI installed and signed in, and no API key.
 backend: claude-cli
 cli_model: sonnet        # CLI aliases: opus / sonnet / haiku
 cli_timeout: 300
+
+# Antigravity. Reasoning effort is part of the model id rather than a flag
+# beside it, so -high is a model choice. `agy models` lists what is available.
+# Longer timeout than the Claude CLI: agy sends a large system prompt of its
+# own before ours, so even a short call runs to tens of seconds.
+agy_model: gemini-3.8-flash-high
+agy_timeout: 600
 
 sources:
   # Greenhouse board tokens. Find one in a company's board URL:
@@ -112,3 +121,10 @@ profile_path: profile.md
 resume_path: resume.json
 applicant_path: applicant.yaml
 output_dir: applications
+
+# Headshot for the resume header. Copied into each application folder next
+# to resume.tex, so the folder compiles anywhere. jpg, png or pdf — anything
+# else pdflatex cannot include. A portrait crop around 600x760 px is about
+# right. Leave the file missing and the resume prints a placeholder box
+# instead; set this to "" to leave no space for a photo at all.
+photo_path: photo.jpg

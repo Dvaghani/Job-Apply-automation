@@ -43,6 +43,16 @@ def check_backend(config) -> list[tuple[str, str, str]]:
             return [_check(OK, "backend: api", "ANTHROPIC_API_KEY is set")]
         return [_check(FAIL, "backend: api", "ANTHROPIC_API_KEY is not set")]
 
+    if backend in {"antigravity", "antigravity-cli", "agy"}:
+        if shutil.which("agy"):
+            return [_check(
+                OK, f"backend: {backend}", f"agy CLI found, model={config.agy_model}"
+            )]
+        return [_check(
+            FAIL, f"backend: {backend}",
+            "agy CLI not on PATH — install from https://antigravity.google/cli",
+        )]
+
     if shutil.which("claude"):
         return [_check(OK, f"backend: {backend}", f"claude CLI found, model={config.cli_model}")]
     return [_check(FAIL, f"backend: {backend}", "claude CLI not on PATH")]
@@ -255,11 +265,50 @@ def probe_arbeitsagentur(config) -> list[tuple[str, str, str]]:
     return out
 
 
+def check_resume_rendering(config) -> list[tuple[str, str, str]]:
+    """What the tailored resume will actually come out looking like.
+
+    Neither of these is fatal — a missing pdflatex falls back to the HTML
+    renderer and a missing headshot leaves a placeholder box — but both
+    change the document that gets sent, silently, which is exactly the kind
+    of thing this command exists to surface.
+    """
+    out = []
+
+    if shutil.which("pdflatex"):
+        out.append(_check(OK, "pdflatex", "resume.tex will be compiled to PDF"))
+    else:
+        out.append(_check(
+            WARN, "pdflatex",
+            "not on PATH — falling back to the HTML layout. "
+            "Install TeX Live for the LaTeX one.",
+        ))
+
+    photo = (config.photo_path or "").strip()
+    if not photo:
+        out.append(_check(WARN, "headshot", "photo_path is empty — no photo"))
+    elif not Path(photo).exists():
+        out.append(_check(
+            WARN, "headshot",
+            f"no file at {photo} — the resume will show a placeholder box",
+        ))
+    elif Path(photo).suffix.lower() not in {".jpg", ".jpeg", ".png", ".pdf"}:
+        out.append(_check(
+            WARN, "headshot",
+            f"{photo} is not a format pdflatex can include (jpg, png, pdf)",
+        ))
+    else:
+        out.append(_check(OK, "headshot", photo))
+
+    return out
+
+
 def run(config, probe: bool = False) -> int:
     """Print the report. Returns the number of failures."""
     sections = [
         ("Files", check_files(config)),
         ("Model backend", check_backend(config)),
+        ("Resume rendering", check_resume_rendering(config)),
         ("Sources", check_sources(config)),
     ]
     if probe and config.adzuna:

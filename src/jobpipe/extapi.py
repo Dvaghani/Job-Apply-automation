@@ -44,16 +44,20 @@ _TYPES = {
     "pdf": "application/pdf",
     "html": "text/html; charset=utf-8",
     "md": "text/plain; charset=utf-8",
+    "tex": "text/plain; charset=utf-8",
 }
 
-# The same five documents per output language: resume.pdf and resume.de.pdf
-# both need serving, and both need to stay on the allowlist rather than the
-# language becoming part of a path the request controls.
+# The same documents per output language: resume.pdf and resume.de.pdf both
+# need serving, and both need to stay on the allowlist rather than the
+# language becoming part of a path the request controls. The .tex is the
+# source the PDF was built from — served so it can be read or downloaded and
+# recompiled, same as the rest.
 SERVABLE = {
     f"{stem}{suffix}.{ext}": _TYPES[ext]
     for suffix in ("", ".de")
     for stem, ext in [
         ("resume", "pdf"), ("resume", "html"), ("resume", "md"),
+        ("resume", "tex"),
         ("cover-letter", "pdf"), ("cover-letter", "html"), ("cover-letter", "md"),
         ("NOTES", "md"),
     ]

@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from . import llm
 from .llm import LLMError
-from .resume import Resume, render_cover_html, render_html, render_markdown
+from .resume import (
+    Resume, render_cover_html, render_html, render_latex, render_markdown,
+)
 from .verify import check_tailoring
 
 log = logging.getLogger(__name__)
@@ -216,6 +220,102 @@ def suffix_for(language: str) -> str:
     return "" if not language or language == "en" else f".{language}"
 
 
+# pdflatex leaves these beside the .tex. They are build droppings, not
+# artifacts, and an application folder is something the user opens by hand.
+_LATEX_DROPPINGS = (".aux", ".log", ".out", ".fls", ".fdb_latexmk")
+
+# Image formats pdflatex reads directly. A headshot in anything else (HEIC,
+# webp, SVG) is reported rather than copied into a folder where it would
+# only make the build fail.
+PHOTO_FORMATS = {".jpg", ".jpeg", ".png", ".pdf"}
+
+
+def copy_photo(photo: str | Path | None, directory: Path) -> str:
+    """Put the headshot beside the .tex, and return the name it will use.
+
+    Copied rather than referenced by absolute path so the folder is
+    self-contained: it compiles after being moved, zipped or handed to
+    someone else. The returned name is used even when there is no photo —
+    the template draws a placeholder box for a file that isn't there.
+    """
+    if not photo:
+        return "photo.jpg"
+
+    source = Path(photo)
+    if not source.exists():
+        log.warning(
+            "no headshot at %s — the resume will show a placeholder box. "
+            "Put one there, or set photo_path in config.yaml.", source,
+        )
+        return "photo.jpg"
+
+    extension = source.suffix.lower()
+    if extension not in PHOTO_FORMATS:
+        log.warning(
+            "%s is not a format pdflatex can include (%s) — skipping the "
+            "headshot", source, ", ".join(sorted(PHOTO_FORMATS)),
+        )
+        return "photo.jpg"
+
+    target = directory / f"photo{extension}"
+    try:
+        shutil.copyfile(source, target)
+    except OSError as exc:
+        log.warning("could not copy %s: %s", source, exc)
+        return "photo.jpg"
+    return target.name
+
+
+def write_latex_pdf(tex_path: Path) -> tuple[Path | None, int]:
+    """Compile the .tex with pdflatex, in its own directory.
+
+    Run from the folder so the headshot beside the .tex resolves, and so the
+    aux files land there to be cleaned up rather than in the cwd. A machine
+    without TeX is a warning, not a failed tailoring run — `write_outputs`
+    falls back to rendering the HTML instead.
+    """
+    from .autofill import pdf_page_count
+
+    try:
+        done = subprocess.run(
+            [
+                "pdflatex", "-interaction=nonstopmode", "-halt-on-error",
+                "-file-line-error", tex_path.name,
+            ],
+            cwd=tex_path.parent,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError:
+        log.warning(
+            "pdflatex not found — falling back to the HTML renderer for "
+            "%s. Install TeX Live to get the LaTeX layout.", tex_path.name,
+        )
+        return None, 0
+    except subprocess.TimeoutExpired:
+        log.warning("pdflatex timed out on %s", tex_path.name)
+        return None, 0
+
+    pdf_path = tex_path.with_suffix(".pdf")
+    if done.returncode != 0 or not pdf_path.exists():
+        # The useful line is the `file:line: message` one, buried in a page
+        # of font loading. Show that rather than the whole log.
+        errors = [
+            line for line in done.stdout.splitlines()
+            if re.match(r"^.+\.tex:\d+: ", line)
+        ]
+        log.warning(
+            "pdflatex failed on %s: %s", tex_path.name,
+            errors[0] if errors else "see " + str(tex_path.with_suffix(".log")),
+        )
+        return None, 0
+
+    for extension in _LATEX_DROPPINGS:
+        tex_path.with_suffix(extension).unlink(missing_ok=True)
+    return pdf_path, pdf_page_count(pdf_path)
+
+
 def write_pdf(html_path: Path, pdf_path: Path) -> tuple[Path | None, int]:
     """Render the resume to PDF now, rather than when a form asks for one.
 
@@ -241,8 +341,16 @@ def write_outputs(
     row,
     findings: list,
     language: str = "en",
+    photo: str | Path | None = None,
 ) -> list[Path]:
-    """Write the tailored artifacts. Returns the paths written."""
+    """Write the tailored artifacts. Returns the paths written.
+
+    The resume the user sends is the LaTeX one: `resume.tex` is written,
+    compiled with pdflatex, and that PDF is what a form uploads. Markdown
+    and HTML are still written beside it — the Markdown is the readable
+    diff of what the model selected, the HTML is what the dashboard links
+    to, and the HTML is also the fallback PDF on a machine without TeX.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     written = []
     sfx = suffix_for(language)
@@ -257,7 +365,22 @@ def write_outputs(
     )
     written.append(resume_html)
 
-    pdf, pages = write_pdf(resume_html, directory / f"resume{sfx}.pdf")
+    photo_name = copy_photo(photo, directory)
+    if (directory / photo_name).exists():
+        written.append(directory / photo_name)
+
+    resume_tex = directory / f"resume{sfx}.tex"
+    resume_tex.write_text(
+        render_latex(resume, tailoring, row["title"], language, photo_name),
+        encoding="utf-8",
+    )
+    written.append(resume_tex)
+
+    pdf, pages = write_latex_pdf(resume_tex)
+    if pdf is None:
+        # No TeX, or the .tex did not compile. Ship the HTML rendering
+        # rather than an application folder with no PDF in it.
+        pdf, pages = write_pdf(resume_html, directory / f"resume{sfx}.pdf")
     if pdf is not None:
         written.append(pdf)
         if pages > RESUME_PAGE_LIMIT:
@@ -366,7 +489,10 @@ def run(
         )
         findings = check_tailoring(resume, result, job_text, language)
         directory = output_dir(config.output_dir, row)
-        write_outputs(directory, resume, result, row, findings, language)
+        write_outputs(
+            directory, resume, result, row, findings, language,
+            photo=config.photo_path,
+        )
         db.mark_tailored(conn, fingerprint, str(directory))
         conn.commit()
 

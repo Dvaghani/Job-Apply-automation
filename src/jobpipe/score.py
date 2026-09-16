@@ -7,6 +7,7 @@ survived the hard filters, so every call is on a plausible candidate.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pydantic import BaseModel, Field
 
@@ -119,37 +120,59 @@ def run(
     profile = config.load_profile()
     keep_status = bool(fingerprints or rescore)
 
-    if rescore:
+    # Named jobs win over `rescore`: naming one is the more specific request,
+    # and the dashboard's per-job Score button would otherwise rescore the
+    # whole database whenever the rescore box happened to be ticked.
+    if fingerprints:
+        pending = [row for row in (db.get(conn, fp) for fp in fingerprints) if row]
+    elif rescore:
         pending = db.rescorable(conn)
         if limit:
             pending = pending[:limit]
-    elif fingerprints:
-        pending = [row for row in (db.get(conn, fp) for fp in fingerprints) if row]
     else:
         pending = db.unscored(conn, limit=limit)
     if not pending:
         return {"scored": 0, "failed": 0, "total": 0}
 
     backend = llm.build(config)
-    log.info("scoring %d job(s) via %s", len(pending), backend.name)
+    workers = max(1, int(getattr(config, "concurrency", 1) or 1))
+    log.info(
+        "scoring %d job(s) via %s, %d at a time", len(pending), backend.name, workers
+    )
     scored = failed = 0
 
-    for row in pending:
-        try:
-            result = score_one(backend, row, profile)
-        except LLMError as exc:
-            # Leave the row unscored so the next run retries it.
-            log.error("scoring failed for %s @ %s: %s", row["title"], row["company"], exc)
-            failed += 1
-            continue
+    # Every backend is a fresh subprocess or one HTTP call per job, and jobs
+    # are independent, so the wait is the whole cost and it parallelises. The
+    # CLI backends pay a fixed process-start penalty per call — around twenty
+    # seconds for `agy` — which is exactly the cost that overlaps.
+    #
+    # Only the model call is threaded. The sqlite connection belongs to the
+    # thread that opened it, and committing per row is deliberate — scoring
+    # costs money and a later crash must not lose it — so results are written
+    # here, in the main thread, as each one lands.
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(score_one, backend, row, profile): row for row in pending
+        }
+        for future in as_completed(futures):
+            row = futures[future]
+            try:
+                result = future.result()
+            except LLMError as exc:
+                # Leave the row unscored so the next run retries it.
+                log.error(
+                    "scoring failed for %s @ %s: %s",
+                    row["title"], row["company"], exc,
+                )
+                failed += 1
+                continue
 
-        db.save_score(
-            conn, row["fingerprint"], result.score, result.reason, result.flags,
-            set_status=not keep_status,
-        )
-        scored += 1
-        log.info("%3d  %s @ %s", result.score, row["title"], row["company"])
-        # Commit per row: scoring costs money, don't lose it to a later crash.
-        conn.commit()
+            db.save_score(
+                conn, row["fingerprint"], result.score, result.reason, result.flags,
+                set_status=not keep_status,
+            )
+            scored += 1
+            log.info("%3d  %s @ %s", result.score, row["title"], row["company"])
+            conn.commit()
 
     return {"scored": scored, "failed": failed, "total": len(pending)}

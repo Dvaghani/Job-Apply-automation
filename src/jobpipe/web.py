@@ -70,7 +70,7 @@ def _config_summary(config: Config) -> dict:
     return {
         "path": config.path,
         "backend": config.backend,
-        "model": config.cli_model if config.backend == "claude-cli" else config.model,
+        "model": config.active_model,
         "min_score": config.min_score,
         "sources": active or ["none configured"],
     }

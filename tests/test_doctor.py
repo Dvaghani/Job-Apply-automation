@@ -230,3 +230,36 @@ def test_adzuna_fetch_forwards_tuning_parameters(monkeypatch):
     assert captured["max_days_old"] == 30
     assert captured["what_or"] == "python c#"
     assert captured["where"] == "Chemnitz"
+
+
+# --- resume rendering -----------------------------------------------------
+
+def test_a_missing_headshot_is_a_warning(tmp_path):
+    cfg = Config(photo_path=str(tmp_path / "nope.jpg"))
+    checks = doctor.check_resume_rendering(cfg)
+    assert statuses(checks)["headshot"] == doctor.WARN
+    assert "placeholder" in details(checks)["headshot"]
+
+
+def test_a_headshot_that_is_there_passes(tmp_path):
+    photo = tmp_path / "me.jpg"
+    photo.write_bytes(b"stub")
+    cfg = Config(photo_path=str(photo))
+    assert statuses(doctor.check_resume_rendering(cfg))["headshot"] == doctor.OK
+
+
+def test_a_headshot_pdflatex_cannot_read_is_flagged(tmp_path):
+    photo = tmp_path / "me.heic"
+    photo.write_bytes(b"stub")
+    cfg = Config(photo_path=str(photo))
+    checks = doctor.check_resume_rendering(cfg)
+    assert statuses(checks)["headshot"] == doctor.WARN
+    assert "pdflatex can include" in details(checks)["headshot"]
+
+
+def test_no_pdflatex_is_a_warning_not_a_failure(monkeypatch):
+    """The HTML renderer still produces a PDF; the layout just differs."""
+    monkeypatch.setattr(doctor.shutil, "which", lambda name: None)
+    checks = doctor.check_resume_rendering(Config())
+    assert statuses(checks)["pdflatex"] == doctor.WARN
+    assert doctor.FAIL not in {s for s, _, _ in checks}

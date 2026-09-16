@@ -10,6 +10,7 @@ from jobpipe.verify import Finding
 # Captured before the autouse stub below replaces it, so the one test that
 # exercises the real renderer still can.
 REAL_WRITE_PDF = tailor.write_pdf
+REAL_WRITE_LATEX_PDF = tailor.write_latex_pdf
 
 MASTER = {
     "basics": {"name": "Ada Lovelace", "email": "ada@example.com"},
@@ -89,24 +90,31 @@ def test_long_description_is_truncated_not_dropped(master):
 
 @pytest.fixture(autouse=True)
 def fake_pdf(monkeypatch):
-    """Stand in for the PDF render.
+    """Stand in for both PDF renders.
 
-    write_outputs now produces the PDF too, so the folder is upload-ready
-    without waiting for a form to ask. That needs a real browser, which is
-    not what any test in this module is about.
+    write_outputs produces the PDF too, so the folder is upload-ready
+    without waiting for a form to ask. The LaTeX route needs pdflatex and
+    the HTML fallback needs a browser; neither is what this module is
+    about, and neither should decide whether these tests pass.
     """
     def render(html_path, pdf_path):
         pdf_path.write_bytes(b"%PDF-1.4 stub")
         return pdf_path, 1
 
+    def compile_tex(tex_path):
+        pdf_path = tex_path.with_suffix(".pdf")
+        pdf_path.write_bytes(b"%PDF-1.4 stub")
+        return pdf_path, 1
+
     monkeypatch.setattr(tailor, "write_pdf", render)
+    monkeypatch.setattr(tailor, "write_latex_pdf", compile_tex)
 
 
 def test_write_outputs_writes_expected_files(tmp_path, master):
     written = tailor.write_outputs(tmp_path / "app", master, T(cover="Hello."), row(), [])
     names = {p.name for p in written}
     assert names == {
-        "resume.md", "resume.html", "resume.pdf",
+        "resume.md", "resume.html", "resume.tex", "resume.pdf",
         "cover-letter.md", "cover-letter.html", "cover-letter.pdf",
         "NOTES.md",
     }
@@ -131,6 +139,7 @@ def test_a_failed_pdf_render_does_not_fail_the_tailoring(tmp_path, monkeypatch):
 
 def test_write_outputs_keeps_going_when_there_is_no_pdf(tmp_path, master, monkeypatch):
     monkeypatch.setattr(tailor, "write_pdf", lambda html, pdf: (None, 0))
+    monkeypatch.setattr(tailor, "write_latex_pdf", lambda tex: (None, 0))
     written = tailor.write_outputs(tmp_path / "app", master, T(), row(), [])
     names = {p.name for p in written}
     assert "resume.md" in names
@@ -146,7 +155,7 @@ def test_german_output_gets_its_own_filenames(tmp_path, master):
     )
     names = {p.name for p in written}
     assert names == {
-        "resume.de.md", "resume.de.html", "resume.de.pdf",
+        "resume.de.md", "resume.de.html", "resume.de.tex", "resume.de.pdf",
         "cover-letter.de.md", "cover-letter.de.html", "cover-letter.de.pdf",
         "NOTES.de.md",
     }
@@ -284,3 +293,75 @@ def test_the_prompt_asks_for_a_complete_letter(master):
     prompt = tailor.SYSTEM
     assert "salutation" in prompt
     assert "sign-off" in prompt
+
+
+# --- the LaTeX resume -----------------------------------------------------
+
+def test_the_tex_source_ships_next_to_the_pdf(tmp_path, master):
+    """The .tex is the source of the PDF, and the thing you hand-edit."""
+    tailor.write_outputs(tmp_path / "app", master, T(), row(), [])
+    tex = (tmp_path / "app" / "resume.tex").read_text()
+    assert r"\begin{document}" in tex
+    assert "Ada Lovelace" in tex
+
+
+def test_the_headshot_is_copied_in_beside_the_tex(tmp_path, master):
+    """Copied, not linked: the folder has to compile after being moved."""
+    photo = tmp_path / "me.png"
+    photo.write_bytes(b"\x89PNG stub")
+    tailor.write_outputs(tmp_path / "app", master, T(), row(), [], photo=photo)
+    assert (tmp_path / "app" / "photo.png").read_bytes() == b"\x89PNG stub"
+    assert r"\IfFileExists{photo.png}" in (tmp_path / "app" / "resume.tex").read_text()
+
+
+def test_a_missing_headshot_is_a_warning_not_a_failure(tmp_path, master, caplog):
+    written = tailor.write_outputs(
+        tmp_path / "app", master, T(), row(), [], photo=tmp_path / "nope.jpg"
+    )
+    assert (tmp_path / "app" / "resume.tex").is_file()
+    assert {p.name for p in written} & {"resume.pdf"}
+    assert "placeholder" in caplog.text
+
+
+def test_a_headshot_pdflatex_cannot_read_is_not_copied(tmp_path, master, caplog):
+    photo = tmp_path / "me.heic"
+    photo.write_bytes(b"stub")
+    tailor.write_outputs(tmp_path / "app", master, T(), row(), [], photo=photo)
+    assert not (tmp_path / "app" / "me.heic").exists()
+    assert not (tmp_path / "app" / "photo.heic").exists()
+    assert "pdflatex can include" in caplog.text
+
+
+def test_no_headshot_configured_still_names_one(tmp_path, master):
+    """The template draws a placeholder box for a file that isn't there."""
+    assert tailor.copy_photo(None, tmp_path) == "photo.jpg"
+    assert tailor.copy_photo("", tmp_path) == "photo.jpg"
+
+
+def test_the_pdf_comes_from_latex_when_it_compiles(tmp_path, master, monkeypatch):
+    """The HTML render is the fallback, not the default."""
+    calls = []
+    monkeypatch.setattr(
+        tailor, "write_pdf",
+        lambda html, pdf: calls.append("html") or (pdf, 1),
+    )
+    tailor.write_outputs(tmp_path / "app", master, T(), row(), [])
+    assert calls == []
+
+
+def test_a_machine_without_tex_falls_back_to_the_html_render(tmp_path, master, monkeypatch):
+    monkeypatch.setattr(tailor, "write_latex_pdf", lambda tex: (None, 0))
+    written = tailor.write_outputs(tmp_path / "app", master, T(), row(), [])
+    assert (tmp_path / "app" / "resume.pdf").is_file()
+    assert "resume.tex" in {p.name for p in written}
+
+
+def test_missing_pdflatex_is_a_warning_not_an_exception(tmp_path, monkeypatch, caplog):
+    def no_binary(*args, **kw):
+        raise FileNotFoundError("pdflatex")
+
+    monkeypatch.setattr(tailor.subprocess, "run", no_binary)
+    tex = tmp_path / "resume.tex"
+    tex.write_text(r"\documentclass{article}\begin{document}x\end{document}")
+    assert REAL_WRITE_LATEX_PDF(tex) == (None, 0)
+    assert "pdflatex not found" in caplog.text

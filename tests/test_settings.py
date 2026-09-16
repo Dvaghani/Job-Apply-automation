@@ -7,6 +7,8 @@ edit is refused before the file is touched, and the previous version is kept.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from jobpipe import settings
@@ -73,11 +75,53 @@ def test_credentials_are_not_editable_and_never_read_out():
     assert not any("app_id" in k or "app_key" in k for k in keys)
 
 
-def test_setup_is_not_editable_from_the_page():
-    """Backends and paths stay a deliberate edit to the file."""
+def test_paths_are_not_editable_from_the_page():
+    """Where things live stays a deliberate edit to the file.
+
+    Which model runs the pipeline is editable — it names a CLI that is
+    either installed or not, and switching it is a thing you do often.
+    Pointing the pipeline at a different database or profile is not.
+    """
     keys = set(settings.BY_KEY)
-    for locked in ["backend", "db_path", "profile_path", "resume_path", "cli_model"]:
+    for locked in ["db_path", "profile_path", "resume_path", "applicant_path",
+                   "output_dir", "photo_path"]:
         assert locked not in keys
+
+
+def test_the_backend_can_be_switched_from_the_page():
+    assert "backend" in settings.BY_KEY
+    values = {v for v, _ in settings.BY_KEY["backend"].choices}
+    assert values == {"claude-cli", "antigravity", "api"}
+
+
+def test_a_backend_outside_the_list_is_refused(config):
+    with pytest.raises(settings.SettingsError, match="must be one of"):
+        settings.write(config, {"backend": "whatever"})
+
+
+def test_switching_the_backend_is_written(config):
+    assert settings.write(config, {"backend": "antigravity"}) == ["backend"]
+    assert settings.read(config)["backend"] == "antigravity"
+
+
+def test_an_absent_choice_reads_as_the_default(config):
+    """The page reports what the pipeline would actually use, not a blank."""
+    assert "agy_model" not in Path(config).read_text(encoding="utf-8")
+    assert settings.read(config)["agy_model"] == "gemini-3.8-flash-high"
+
+
+def test_a_hand_written_value_outside_the_list_still_saves(config):
+    """The file is hand-editable and may be ahead of this page's options."""
+    text = Path(config).read_text(encoding="utf-8")
+    Path(config).write_text(text + "\nagy_model: gemini-3.7-flash-high\n",
+                            encoding="utf-8")
+    assert settings.read(config)["agy_model"] == "gemini-3.7-flash-high"
+    # saving something else must not trip over it
+    changed = settings.write(config, {
+        "min_score": 44, "agy_model": "gemini-3.7-flash-high",
+    })
+    assert changed == ["min_score"]
+    assert settings.read(config)["agy_model"] == "gemini-3.7-flash-high"
 
 
 # -- writing ---------------------------------------------------------------
@@ -205,4 +249,19 @@ def test_every_setting_belongs_to_a_rendered_group():
 
 
 def test_groups_come_back_in_display_order():
-    assert [name for name, _ in settings.grouped()][0] == "Review"
+    assert [name for name, _ in settings.grouped()][0] == "Model"
+
+
+def test_active_model_follows_the_backend():
+    """`model` alone is the API's, and says nothing about a run on a CLI."""
+    from jobpipe.config import Config
+
+    c = Config(model="claude-opus-5", cli_model="sonnet",
+               agy_model="gemini-3.8-flash-high")
+    for backend, expected in [
+        ("claude-cli", "sonnet"),
+        ("antigravity", "gemini-3.8-flash-high"),
+        ("api", "claude-opus-5"),
+    ]:
+        c.backend = backend
+        assert c.active_model == expected

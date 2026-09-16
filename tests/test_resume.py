@@ -340,3 +340,99 @@ def test_headings_are_kept_with_what_follows_them():
     css = resume.HTML_SHELL
     assert "page-break-after: avoid" in css
     assert "page-break-inside: avoid" in css
+
+
+# --- LaTeX ----------------------------------------------------------------
+
+def tex(master_resume, tailoring=None, **kw):
+    return resume.render_latex(
+        master_resume, tailoring or T([R(0, [B(0, "Built a ledger.")])]), **kw
+    )
+
+
+def test_latex_escapes_the_characters_that_would_not_compile(master):
+    out = tex(master, T([R(0, [B(0, "Shipped C# at 100% under budget_x & Co.")])]))
+    assert r"C\# at 100\% under budget\_x \& Co." in out
+    assert "100%" not in out
+
+
+def test_latex_escaping_does_not_double_escape_its_own_backslashes():
+    assert resume.latex_escape("a_b") == r"a\_b"
+    assert resume.latex_escape("50%") == r"50\%"
+    # The backslash rule runs first, so the backslashes it introduces are
+    # not re-escaped by the rules after it.
+    assert resume.latex_escape(r"C:\path") == r"C:\textbackslash{}path"
+
+
+def test_the_document_compiles_as_a_whole(master):
+    out = tex(master)
+    assert out.startswith("%")
+    assert r"\begin{document}" in out
+    assert out.rstrip().endswith(r"\end{document}")
+
+
+def test_the_photo_is_referenced_by_the_name_it_will_have(master):
+    out = tex(master, photo="photo.png")
+    assert r"\IfFileExists{photo.png}" in out
+    assert r"\includegraphics[width=1.15in]{photo.png}" in out
+
+
+def test_a_missing_photo_still_compiles(master):
+    """The placeholder branch is what makes a photo-less run survive."""
+    out = tex(master)
+    assert r"\framebox" in out
+
+
+def test_only_the_selected_bullets_are_rendered(master):
+    out = tex(master, T([R(0, [B(1, "Mentored 4 engineers.")])]))
+    assert "Mentored 4 engineers." in out
+    assert "Built a ledger." not in out
+
+
+def test_skills_keep_the_masters_grouping(master):
+    out = tex(master, T([R(0, [B(0, "x")])], skills=["Python"]))
+    assert r"\textbf{Languages}{: Python}" in out
+    # "Go" was not selected for this posting and must not appear.
+    assert "Go" not in out
+
+
+def test_a_group_name_selected_as_a_skill_does_not_become_its_own_row(master):
+    """`all_skill_keywords` counts group names, so the model may return one."""
+    out = tex(master, T([R(0, [B(0, "x")])], skills=["Python", "Languages"]))
+    assert out.count("Languages") == 1
+
+
+def test_the_german_resume_uses_german_headings_and_babel(master):
+    out = tex(master, language="de")
+    assert r"\section{Berufserfahrung}" in out
+    assert r"\usepackage[ngerman]{babel}" in out
+
+
+def test_the_thesis_reaches_the_latex_resume(tmp_path):
+    data = json.loads(json.dumps(MASTER))
+    data["education"][0]["summary"] = "Thesis: stereo depth estimation."
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps(data))
+    assert "Thesis: stereo depth estimation." in tex(load(path))
+
+
+def test_a_long_project_description_is_not_dropped(tmp_path):
+    data = json.loads(json.dumps(MASTER))
+    data["projects"] = [{
+        "name": "Bench",
+        "description": "A description far too long to sit on one heading line.",
+        "highlights": ["Did the thing."],
+    }]
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps(data))
+    out = tex(load(path))
+    assert "A description far too long to sit on one heading line." in out
+    # A p-column wraps; the l-column of the original template would have run
+    # the description off the right edge of the page.
+    assert r"p{0.8\textwidth}" in out
+
+
+def test_profile_links_get_their_own_icons(master):
+    out = tex(master)
+    assert r"\faGithub" in out
+    assert "https://github.com/ada" in out
