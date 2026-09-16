@@ -380,3 +380,92 @@ def test_untailor_clears_a_row_whose_folder_is_already_gone(setup, monkeypatch):
     result = tailor.untailor(config, conn, [fp])
     assert result["cleared"] == 1 and result["failed"] == 0
     assert db.get(conn, fp)["tailored_at"] is None
+
+
+# --- untailor scope ------------------------------------------------------
+#
+# "Remove the tailored resumes for my approved jobs" must not reach into
+# everything ever tailored — most of which is finished work, including
+# applications already sent.
+
+def _tailored_job(config, conn, monkeypatch, source_id, title, status):
+    from jobpipe.models import Job
+    monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
+    monkeypatch.setattr(tailor.llm, "build", lambda c: _FakeBackend())
+    job = Job(source="s", source_id=source_id, company="Globex", title=title,
+              url="https://x", location="Remote", description="Python.")
+    db.upsert_job(conn, job)
+    db.set_status(conn, job.fingerprint(), STATUS_APPROVED)
+    conn.commit()
+    tailor.run(config, conn, [job.fingerprint()])
+    if status != STATUS_APPROVED:
+        db.set_status(conn, job.fingerprint(), status)
+        conn.commit()
+    return job.fingerprint()
+
+
+def _mixed(config, conn, monkeypatch):
+    from jobpipe.models import STATUS_APPLIED, STATUS_REJECTED
+    return {
+        "approved": _tailored_job(config, conn, monkeypatch, "10", "A", STATUS_APPROVED),
+        "applied": _tailored_job(config, conn, monkeypatch, "11", "B", STATUS_APPLIED),
+        "rejected": _tailored_job(config, conn, monkeypatch, "12", "C", STATUS_REJECTED),
+    }
+
+
+def test_tailored_can_be_narrowed_to_one_status(setup, monkeypatch):
+    config, conn, fp = setup
+    jobs = _mixed(config, conn, monkeypatch)
+    everything = {r["fingerprint"] for r in db.tailored(conn)}
+    approved = {r["fingerprint"] for r in db.tailored(conn, status=STATUS_APPROVED)}
+    assert jobs["applied"] in everything and jobs["rejected"] in everything
+    assert jobs["applied"] not in approved and jobs["rejected"] not in approved
+    assert jobs["approved"] in approved
+
+
+def test_untailor_defaults_to_approved_only(setup, monkeypatch, capsys):
+    from jobpipe.cli import main
+    config, conn, fp = setup
+    jobs = _mixed(config, conn, monkeypatch)
+
+    assert main(["-c", tmp_config(config), "untailor", "--yes"]) == 0
+    out = capsys.readouterr().out
+    # The approved ones went; the applied and rejected ones did not.
+    assert db.get(conn, jobs["approved"])["tailored_at"] is None
+    assert db.get(conn, jobs["applied"])["tailored_at"] is not None
+    assert db.get(conn, jobs["rejected"])["tailored_at"] is not None
+    assert "approved" in out
+
+
+def test_untailor_all_still_spares_applied_jobs(setup, monkeypatch, capsys):
+    """--all widens the status filter; it does not override the guard on
+    documents that were actually sent."""
+    from jobpipe.cli import main
+    config, conn, fp = setup
+    jobs = _mixed(config, conn, monkeypatch)
+
+    assert main(["-c", tmp_config(config), "untailor", "--all", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "record of what you sent" in out
+    assert db.get(conn, jobs["applied"])["tailored_at"] is not None
+    assert db.get(conn, jobs["rejected"])["tailored_at"] is None
+
+
+def test_untailor_removes_applied_only_when_asked_twice(setup, monkeypatch):
+    from jobpipe.cli import main
+    config, conn, fp = setup
+    jobs = _mixed(config, conn, monkeypatch)
+
+    main(["-c", tmp_config(config), "untailor", "--all", "--include-applied", "--yes"])
+    assert db.get(conn, jobs["applied"])["tailored_at"] is None
+
+
+def test_naming_a_job_explicitly_is_enough(setup, monkeypatch):
+    """An explicit fingerprint is its own confirmation of scope."""
+    from jobpipe.cli import main
+    config, conn, fp = setup
+    jobs = _mixed(config, conn, monkeypatch)
+
+    main(["-c", tmp_config(config), "untailor", jobs["rejected"], "--yes"])
+    assert db.get(conn, jobs["rejected"])["tailored_at"] is None
+    assert db.get(conn, jobs["approved"])["tailored_at"] is not None

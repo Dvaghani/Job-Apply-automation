@@ -12,7 +12,7 @@ from . import autofill, db, doctor, ingest, portable, score, tailor, web
 from .config import ConfigError, load_config
 from .applicant import ApplicantError
 from .llm import LLMError
-from .models import STATUS_APPROVED
+from .models import STATUS_APPLIED, STATUS_APPROVED
 from .resume import ResumeError
 
 
@@ -131,18 +131,35 @@ def cmd_rerender(config, args) -> int:
 def cmd_untailor(config, args) -> int:
     """Delete tailored documents so the jobs can be tailored again."""
     conn = db.connect(config.db_path)
-    rows = (
-        [db.get(conn, f) for f in args.job] if args.job
-        else db.tailored(conn)
-    )
-    rows = [r for r in rows if r is not None]
+
+    if args.job:
+        # Naming a job is explicit enough; no scope filtering.
+        rows = [r for r in (db.get(conn, f) for f in args.job) if r is not None]
+    else:
+        # Default to approved: those are the ones still waiting to be sent,
+        # and so the ones a template change is worth rebuilding. Everything
+        # ever tailored is a much larger and mostly finished set.
+        rows = db.tailored(conn, status=None if args.all else STATUS_APPROVED)
+
+    # A resume you already sent is the only record of what the employer
+    # actually received. Re-tailoring gives different wording, so deleting
+    # it loses that for good — keep it unless asked twice.
+    applied = [r for r in rows if r["status"] == STATUS_APPLIED]
+    if applied and not args.include_applied:
+        rows = [r for r in rows if r["status"] != STATUS_APPLIED]
+        print(
+            f"Keeping {len(applied)} already-applied job(s): their documents are "
+            "the record of what you sent.\nPass --include-applied to remove "
+            "those too.\n"
+        )
+
     if not rows:
-        print("nothing tailored to remove")
+        print("nothing to remove")
         return 0
 
     print(f"This deletes the tailored documents for {len(rows)} job(s):\n")
     for row in rows:
-        print(f"  {row['title'][:48]}")
+        print(f"  [{row['status']}] {row['title'][:44]}")
         print(f"    {row['company']}  ·  {row['output_dir'] or '(no folder on disk)'}")
     print("\nThe jobs themselves stay — same status, same score. Only the")
     print("generated folders go, so `jobpipe tailor` rebuilds them.")
@@ -342,7 +359,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_untailor.add_argument(
         "job", nargs="*",
-        help="job fingerprints; omit to remove every tailored application",
+        help="job fingerprints; omit for every tailored approved job",
+    )
+    p_untailor.add_argument(
+        "--all", action="store_true",
+        help="every tailored job, not just the approved ones",
+    )
+    p_untailor.add_argument(
+        "--include-applied", action="store_true",
+        help="also remove documents for jobs you already applied to",
     )
     p_untailor.add_argument(
         "-y", "--yes", action="store_true", help="skip the confirmation"
