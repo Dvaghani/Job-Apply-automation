@@ -194,6 +194,19 @@ def mark_tailored(conn: sqlite3.Connection, fingerprint: str, directory: str) ->
     )
 
 
+def tailored(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every job with tailored output on disk, newest first."""
+    return list(
+        conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE tailored_at IS NOT NULL AND output_dir IS NOT NULL
+            ORDER BY tailored_at DESC
+            """
+        )
+    )
+
+
 def untailored_approved(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Approved jobs with no tailored output yet — the tailoring work queue."""
     return list(

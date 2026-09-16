@@ -57,6 +57,27 @@ class T:
         self.keywords_matched = keywords or []
         self.gaps = gaps or []
 
+    def model_dump(self):
+        """`write_outputs` saves the tailoring so it can be rebuilt later,
+        so the stub has to serialise like the real Tailoring does."""
+        return {
+            "summary": self.summary,
+            "roles": [
+                {
+                    "role_index": role.role_index,
+                    "bullets": [
+                        {"source_index": b.source_index, "text": b.text}
+                        for b in role.bullets
+                    ],
+                }
+                for role in self.roles
+            ],
+            "selected_skills": self.selected_skills,
+            "cover_letter": self.cover_letter,
+            "keywords_matched": self.keywords_matched,
+            "gaps": self.gaps,
+        }
+
 
 def test_slugify():
     assert tailor.slugify("Globex Corp.") == "globex-corp"
@@ -116,7 +137,7 @@ def test_write_outputs_writes_expected_files(tmp_path, master):
     assert names == {
         "resume.md", "resume.html", "resume.tex", "resume.pdf",
         "cover-letter.md", "cover-letter.html", "cover-letter.pdf",
-        "NOTES.md",
+        "NOTES.md", "tailoring.json",
     }
 
 
@@ -157,7 +178,7 @@ def test_german_output_gets_its_own_filenames(tmp_path, master):
     assert names == {
         "resume.de.md", "resume.de.html", "resume.de.tex", "resume.de.pdf",
         "cover-letter.de.md", "cover-letter.de.html", "cover-letter.de.pdf",
-        "NOTES.de.md",
+        "NOTES.de.md", "tailoring.de.json",
     }
 
 

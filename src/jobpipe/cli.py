@@ -105,6 +105,29 @@ def _list_applyable(conn) -> int:
     return 0
 
 
+def cmd_rerender(config, args) -> int:
+    """Rebuild tailored documents from saved state — no model call."""
+    conn = db.connect(config.db_path)
+    fingerprints = list(args.job) or [r["fingerprint"] for r in db.tailored(conn)]
+    if not fingerprints:
+        print("nothing tailored yet — run `jobpipe tailor` first")
+        return 0
+
+    result = tailor.rerender(config, conn, fingerprints)
+    print(
+        f"rebuilt {result['rerendered']}, skipped {result['skipped']}, "
+        f"failed {result['failed']}"
+    )
+    if result["skipped"]:
+        print(
+            "\nSkipped applications were tailored before their decisions were "
+            "saved, so there is nothing to rebuild from — re-run "
+            "`jobpipe tailor <fingerprint>` for those.",
+            file=sys.stderr,
+        )
+    return 1 if result["failed"] and not result["rerendered"] else 0
+
+
 def cmd_apply(config, args) -> int:
     conn = db.connect(config.db_path)
 
@@ -272,6 +295,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="mark the job applied afterwards (only do this once you have submitted)",
     )
 
+    p_rerender = sub.add_parser(
+        "rerender",
+        help="rebuild tailored documents after a template change (no model call)",
+    )
+    p_rerender.add_argument(
+        "job", nargs="*",
+        help="job fingerprints; omit to rebuild every tailored application",
+    )
+
     # Both serve the same app; they differ only in the page they point you at.
     for name, help_text in [
         ("dashboard", "run the pipeline from a local web page"),
@@ -310,6 +342,7 @@ COMMANDS = {
     "score": cmd_score,
     "tailor": cmd_tailor,
     "apply": cmd_apply,
+    "rerender": cmd_rerender,
     "run": cmd_run,
     "dashboard": cmd_dashboard,
     "review": cmd_review,

@@ -7,6 +7,7 @@ you never listed — and `verify` checks that it didn't.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
@@ -29,6 +30,16 @@ MAX_DESCRIPTION_CHARS = 8000
 # Two pages is the convention almost everywhere, and the length a
 # recruiter actually reads. Past it, say so rather than let it ship.
 RESUME_PAGE_LIMIT = 2
+
+# The model's decisions, saved beside the documents they produced, so a
+# template fix can rebuild them without paying for the call again. Suffixed
+# per language like every other output: the two languages coexist in one
+# folder, and a German run must not overwrite the English decisions.
+TAILORING_STATE_GLOB = "tailoring*.json"
+
+
+def state_name(language: str) -> str:
+    return f"tailoring{suffix_for(language)}.json"
 
 SYSTEM = """You tailor one candidate's existing resume to one job posting.
 
@@ -390,6 +401,19 @@ def write_outputs(
     written = []
     sfx = suffix_for(language)
 
+    # What the model decided, kept so the documents can be rebuilt without
+    # asking it again. Every template change until now cost a fresh call per
+    # application to pick up, which is both slow and paid for.
+    state = directory / state_name(language)
+    state.write_text(
+        json.dumps(
+            {"language": language, "tailoring": tailoring.model_dump()},
+            indent=2, ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    written.append(state)
+
     resume_md = directory / f"resume{sfx}.md"
     resume_md.write_text(render_markdown(resume, tailoring, language), encoding="utf-8")
     written.append(resume_md)
@@ -480,6 +504,66 @@ def write_outputs(
     written.append(notes_path)
 
     return written
+
+
+def load_states(directory: Path) -> list[tuple[Tailoring, str]]:
+    """Every saved Tailoring in an application folder, one per language."""
+    out = []
+    for state in sorted(Path(directory).glob(TAILORING_STATE_GLOB)):
+        try:
+            data = json.loads(state.read_text(encoding="utf-8"))
+            out.append(
+                (Tailoring.model_validate(data["tailoring"]), data.get("language", "en"))
+            )
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            log.warning("%s is unreadable: %s", state, exc)
+    return out
+
+
+def rerender(config, conn, fingerprints: list[str]) -> dict:
+    """Rebuild an application's documents from its saved Tailoring.
+
+    No model call: the wording is already decided and stored. This is how a
+    template or rendering fix reaches applications that were tailored
+    before it — otherwise every such fix costs one paid call per job.
+    """
+    from . import db
+    from .resume import load as load_resume
+
+    resume = load_resume(config.resume_path)
+    done = skipped = failed = 0
+
+    for fingerprint in fingerprints:
+        row = db.get(conn, fingerprint)
+        if row is None or not row["output_dir"]:
+            log.error("%s has no tailored output", fingerprint)
+            failed += 1
+            continue
+
+        directory = Path(row["output_dir"])
+        states = load_states(directory)
+        if not states:
+            # Tailored before the state file existed, or it was deleted.
+            log.warning(
+                "%s @ %s has no saved tailoring — re-run `jobpipe tailor %s` "
+                "to rebuild it", row["title"], row["company"], fingerprint,
+            )
+            skipped += 1
+            continue
+
+        job_text = " ".join(
+            filter(None, [row["company"], row["title"], row["description"]])
+        )
+        for tailoring, language in states:
+            findings = check_tailoring(resume, tailoring, job_text, language)
+            write_outputs(
+                directory, resume, tailoring, row, findings, language,
+                photo=config.photo_path,
+            )
+            log.info("rebuilt %s (%s)", directory, language)
+        done += 1
+
+    return {"rerendered": done, "skipped": skipped, "failed": failed}
 
 
 def run(

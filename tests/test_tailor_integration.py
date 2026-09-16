@@ -220,3 +220,91 @@ def tmp_config(config) -> str:
         f"output_dir: {config.output_dir}\n"
     )
     return str(path)
+
+
+# --- rebuilding without paying for the call again ------------------------
+#
+# Every template fix used to reach existing applications only by re-running
+# the model on each one. The decisions are saved now, so rendering changes
+# are free to apply.
+
+def test_tailoring_state_is_saved_beside_the_documents(setup, monkeypatch):
+    from pathlib import Path
+    config, conn, fp = setup
+    monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
+    monkeypatch.setattr(tailor.llm, "build", lambda c: _FakeBackend())
+    tailor.run(config, conn, [fp])
+
+    state = Path(db.get(conn, fp)["output_dir"]) / tailor.state_name("en")
+    assert state.exists()
+    loaded = tailor.load_states(state.parent)
+    assert len(loaded) == 1
+    tailoring, language = loaded[0]
+    assert tailoring.summary == HONEST.summary
+    assert language == "en"
+
+
+def test_rerender_rebuilds_without_calling_the_model(setup, monkeypatch):
+    from pathlib import Path
+    config, conn, fp = setup
+    monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
+    monkeypatch.setattr(tailor.llm, "build", lambda c: _FakeBackend())
+    tailor.run(config, conn, [fp])
+
+    resume_md = Path(db.get(conn, fp)["output_dir"]) / "resume.md"
+    resume_md.write_text("clobbered", encoding="utf-8")
+
+    def explode(*a, **k):
+        raise AssertionError("rerender must not call the model")
+
+    monkeypatch.setattr(tailor, "tailor_one", explode)
+    monkeypatch.setattr(tailor.llm, "build", explode)
+
+    assert tailor.rerender(config, conn, [fp])["rerendered"] == 1
+    assert "clobbered" not in resume_md.read_text(encoding="utf-8")
+    assert HONEST.summary in resume_md.read_text(encoding="utf-8")
+
+
+def test_rerender_skips_an_application_with_no_saved_state(setup, monkeypatch):
+    from pathlib import Path
+    config, conn, fp = setup
+    monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
+    monkeypatch.setattr(tailor.llm, "build", lambda c: _FakeBackend())
+    tailor.run(config, conn, [fp])
+
+    # An application tailored before the state file existed.
+    (Path(db.get(conn, fp)["output_dir"]) / tailor.state_name("en")).unlink()
+
+    result = tailor.rerender(config, conn, [fp])
+    assert result == {"rerendered": 0, "skipped": 1, "failed": 0}
+
+
+def test_rerender_reports_a_job_that_was_never_tailored(setup):
+    config, conn, fp = setup
+    assert tailor.rerender(config, conn, [fp])["failed"] == 1
+
+
+def test_load_states_survives_a_corrupt_file(tmp_path):
+    (tmp_path / tailor.state_name("en")).write_text("{not json", encoding="utf-8")
+    assert tailor.load_states(tmp_path) == []
+    assert tailor.load_states(tmp_path / "nope") == []
+
+
+def test_each_language_keeps_its_own_saved_tailoring(setup, tmp_path):
+    """Both languages share a folder; a German run must not overwrite the
+    English decisions."""
+    from jobpipe.resume import load as load_resume
+    config, conn, fp = setup
+    resume = load_resume(config.resume_path)
+    row = db.get(conn, fp)
+    directory = tmp_path / "app"
+
+    tailor.write_outputs(directory, resume, HONEST, row, [], language="en")
+    tailor.write_outputs(directory, resume, FABRICATED, row, [], language="de")
+
+    assert (directory / tailor.state_name("en")).exists()
+    assert (directory / tailor.state_name("de")).exists()
+    by_language = {lang: t for t, lang in tailor.load_states(directory)}
+    assert set(by_language) == {"en", "de"}
+    assert by_language["en"].summary == HONEST.summary
+    assert by_language["de"].summary == FABRICATED.summary

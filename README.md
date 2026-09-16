@@ -115,6 +115,7 @@ jobpipe score <fingerprint>   # (re)score one job, keeping its status
 jobpipe run        # both of the above — the daily command
 jobpipe review     # open the review queue at localhost:5000
 jobpipe tailor     # tailor your resume to everything you approved
+jobpipe rerender   # rebuild tailored documents after a template change
 jobpipe apply      # list approved jobs and their fingerprints
 jobpipe apply <fingerprint>   # open the form, fill it — you submit
 jobpipe stats      # counts by status
