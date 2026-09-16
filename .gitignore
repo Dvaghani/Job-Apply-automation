@@ -7,7 +7,8 @@ venv/
 
 # Local config and personal data — never commit these
 config.yaml
-config.yaml.bak  # the settings page's own backup, rewritten on every save
+# The settings page's own backup, rewritten on every save.
+config.yaml.bak
 profile.md
 resume.json
 # Per-language masters: resume.de.json and friends.

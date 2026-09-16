@@ -70,7 +70,12 @@ the master states it — you may drop a number, never change one.
 - Lead each bullet with the outcome, not the activity.
 - Order skills by relevance to the posting; include only skills the master \
 already lists.
-- Write a summary of 2-3 lines aimed squarely at this role.
+- Write a summary of 2-3 lines aimed squarely at this role. **Do not restate \
+the candidate's name, location, or any other contact detail** — the header \
+above the summary already prints them, on every layout this renders to. \
+"Based near Chemnitz" or "Software engineer located in X" spends a line of \
+a very short section on something the reader has already seen; use the \
+space on what makes this candidate right for the role instead.
 - In `projects`, give the projects worth the space for THIS posting, each \
 with at most 3 bullets, rewritten to the same length rule as the rest. Drop a \
 project whose substance already appears in a role bullet: repeating it costs \
