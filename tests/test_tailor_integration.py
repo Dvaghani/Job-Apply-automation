@@ -308,3 +308,75 @@ def test_each_language_keeps_its_own_saved_tailoring(setup, tmp_path):
     assert set(by_language) == {"en", "de"}
     assert by_language["en"].summary == HONEST.summary
     assert by_language["de"].summary == FABRICATED.summary
+
+
+# --- removing tailored output --------------------------------------------
+
+def test_untailor_deletes_the_folder_and_requeues_the_job(setup, monkeypatch):
+    from pathlib import Path
+    config, conn, fp = setup
+    monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
+    monkeypatch.setattr(tailor.llm, "build", lambda c: _FakeBackend())
+    tailor.run(config, conn, [fp])
+
+    directory = Path(db.get(conn, fp)["output_dir"])
+    assert directory.is_dir()
+
+    result = tailor.untailor(config, conn, [fp])
+    assert result == {"removed": 1, "cleared": 1, "failed": 0}
+    assert not directory.exists()
+
+    row = db.get(conn, fp)
+    assert row["tailored_at"] is None and row["output_dir"] is None
+    # The job itself survives: same status, back in the tailoring queue.
+    assert row["status"] == STATUS_APPROVED
+    assert [r["fingerprint"] for r in db.untailored_approved(conn)] == [fp]
+
+
+def test_untailor_leaves_the_score_and_status_alone(setup, monkeypatch):
+    config, conn, fp = setup
+    monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
+    monkeypatch.setattr(tailor.llm, "build", lambda c: _FakeBackend())
+    tailor.run(config, conn, [fp])
+
+    before = db.get(conn, fp)
+    tailor.untailor(config, conn, [fp])
+    after = db.get(conn, fp)
+    assert (after["status"], after["score"]) == (before["status"], before["score"])
+
+
+def test_untailor_refuses_a_path_outside_the_output_folder(setup, tmp_path, monkeypatch):
+    """A hand-edited or corrupt row must not be able to delete anything it
+    likes."""
+    config, conn, fp = setup
+    outside = tmp_path / "not-mine"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("important", encoding="utf-8")
+    db.mark_tailored(conn, fp, str(outside))
+    conn.commit()
+
+    result = tailor.untailor(config, conn, [fp])
+    assert result["failed"] == 1
+    assert result["removed"] == 0
+    assert (outside / "keep.txt").exists()
+    # Refused, so the row is left as it was rather than half-cleared.
+    assert db.get(conn, fp)["output_dir"] is not None
+
+
+def test_untailor_reports_an_unknown_fingerprint(setup):
+    config, conn, _ = setup
+    assert tailor.untailor(config, conn, ["deadbeef"])["failed"] == 1
+
+
+def test_untailor_clears_a_row_whose_folder_is_already_gone(setup, monkeypatch):
+    import shutil
+    from pathlib import Path
+    config, conn, fp = setup
+    monkeypatch.setattr(tailor, "tailor_one", lambda *a, **k: HONEST)
+    monkeypatch.setattr(tailor.llm, "build", lambda c: _FakeBackend())
+    tailor.run(config, conn, [fp])
+
+    shutil.rmtree(Path(db.get(conn, fp)["output_dir"]))
+    result = tailor.untailor(config, conn, [fp])
+    assert result["cleared"] == 1 and result["failed"] == 0
+    assert db.get(conn, fp)["tailored_at"] is None

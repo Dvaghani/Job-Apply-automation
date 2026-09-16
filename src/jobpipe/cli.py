@@ -128,6 +128,47 @@ def cmd_rerender(config, args) -> int:
     return 1 if result["failed"] and not result["rerendered"] else 0
 
 
+def cmd_untailor(config, args) -> int:
+    """Delete tailored documents so the jobs can be tailored again."""
+    conn = db.connect(config.db_path)
+    rows = (
+        [db.get(conn, f) for f in args.job] if args.job
+        else db.tailored(conn)
+    )
+    rows = [r for r in rows if r is not None]
+    if not rows:
+        print("nothing tailored to remove")
+        return 0
+
+    print(f"This deletes the tailored documents for {len(rows)} job(s):\n")
+    for row in rows:
+        print(f"  {row['title'][:48]}")
+        print(f"    {row['company']}  ·  {row['output_dir'] or '(no folder on disk)'}")
+    print("\nThe jobs themselves stay — same status, same score. Only the")
+    print("generated folders go, so `jobpipe tailor` rebuilds them.")
+
+    if not args.yes:
+        try:
+            if input("\nRemove them? [y/N] ").strip().lower() not in {"y", "yes"}:
+                print("nothing removed")
+                return 0
+        except EOFError:
+            print("nothing removed (no answer)", file=sys.stderr)
+            return 1
+
+    result = tailor.untailor(
+        config, conn, [r["fingerprint"] for r in rows]
+    )
+    print(
+        f"\nremoved {result['removed']} folder(s), "
+        f"{result['cleared']} job(s) back in the tailoring queue"
+    )
+    if result["failed"]:
+        print(f"{result['failed']} failed — see the messages above", file=sys.stderr)
+    print("\nRun `jobpipe tailor` to rebuild them with the current template.")
+    return 1 if result["failed"] and not result["cleared"] else 0
+
+
 def cmd_apply(config, args) -> int:
     conn = db.connect(config.db_path)
 
@@ -295,6 +336,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="mark the job applied afterwards (only do this once you have submitted)",
     )
 
+    p_untailor = sub.add_parser(
+        "untailor",
+        help="delete tailored documents so the jobs can be tailored again",
+    )
+    p_untailor.add_argument(
+        "job", nargs="*",
+        help="job fingerprints; omit to remove every tailored application",
+    )
+    p_untailor.add_argument(
+        "-y", "--yes", action="store_true", help="skip the confirmation"
+    )
+
     p_rerender = sub.add_parser(
         "rerender",
         help="rebuild tailored documents after a template change (no model call)",
@@ -343,6 +396,7 @@ COMMANDS = {
     "tailor": cmd_tailor,
     "apply": cmd_apply,
     "rerender": cmd_rerender,
+    "untailor": cmd_untailor,
     "run": cmd_run,
     "dashboard": cmd_dashboard,
     "review": cmd_review,

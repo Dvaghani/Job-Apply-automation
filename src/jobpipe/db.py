@@ -180,6 +180,17 @@ def set_status(conn: sqlite3.Connection, fingerprint: str, status: str) -> None:
     )
 
 
+def clear_tailored(conn: sqlite3.Connection, fingerprint: str) -> None:
+    """Forget a job's tailored output, returning it to the tailoring queue.
+
+    The job keeps its status and its score: only the documents are gone.
+    """
+    conn.execute(
+        "UPDATE jobs SET tailored_at = NULL, output_dir = NULL WHERE fingerprint = ?",
+        (fingerprint,),
+    )
+
+
 def mark_tailored(conn: sqlite3.Connection, fingerprint: str, directory: str) -> None:
     """Record where a job's tailored documents were written.
 

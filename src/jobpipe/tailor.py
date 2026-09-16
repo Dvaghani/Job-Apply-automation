@@ -520,6 +520,51 @@ def load_states(directory: Path) -> list[tuple[Tailoring, str]]:
     return out
 
 
+def untailor(config, conn, fingerprints: list[str]) -> dict:
+    """Delete tailored documents and return the jobs to the tailoring queue.
+
+    The job itself is untouched — same status, same score, same place in
+    the review queue. Only the generated folder goes, so the next
+    `jobpipe tailor` rebuilds it from scratch. Useful when the template
+    changed and the saved decisions predate it, which is the one case
+    `rerender` cannot help with.
+    """
+    from . import db
+
+    base = Path(config.output_dir).resolve()
+    removed = cleared = failed = 0
+
+    for fingerprint in fingerprints:
+        row = db.get(conn, fingerprint)
+        if row is None:
+            log.error("no job with fingerprint %s", fingerprint)
+            failed += 1
+            continue
+
+        directory = row["output_dir"]
+        if directory:
+            target = Path(directory).resolve()
+            # A corrupt or hand-edited row must not be able to point this
+            # at somewhere outside the output folder.
+            if target != base and base in target.parents:
+                if target.is_dir():
+                    shutil.rmtree(target)
+                    removed += 1
+                    log.info("removed %s", target)
+            else:
+                log.error(
+                    "refusing to delete %s — it is not inside %s", target, base
+                )
+                failed += 1
+                continue
+
+        db.clear_tailored(conn, fingerprint)
+        cleared += 1
+
+    conn.commit()
+    return {"removed": removed, "cleared": cleared, "failed": failed}
+
+
 def rerender(config, conn, fingerprints: list[str]) -> dict:
     """Rebuild an application's documents from its saved Tailoring.
 
