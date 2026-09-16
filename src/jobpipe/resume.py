@@ -183,6 +183,74 @@ def role_dates(role: Role, language: str = "en") -> str:
     return end or ""
 
 
+# A project heading is one line. A master's `description` is free text and
+# tends to collect things no recruiter reads — registered titles, department
+# names, submission dates — which then wrap the heading across four italic
+# lines and push the real content off the page.
+PROJECT_BLURB_CHARS = 90
+
+# An abbreviation ends in a period too — "M.Sc.", "B.E.", "Dr." — so taking
+# the first sentence alone can leave a two-word stub. Keep absorbing
+# fragments until the blurb is long enough to be a phrase rather than a title.
+MIN_BLURB_CHARS = 15
+
+# Bullets per project. The master is a superset by design; a thesis with
+# eight bullets of measurements is a lab report, not a resume entry.
+PROJECT_BULLET_LIMIT = 3
+
+
+def project_blurb(description: str) -> str:
+    """The one-line qualifier a project heading has room for."""
+    text = " ".join((description or "").split())
+    if not text:
+        return ""
+    blurb = ""
+    for fragment in re.split(r"(?<=[.!?])\s+", text):
+        blurb = f"{blurb} {fragment}".strip()
+        if len(blurb) >= MIN_BLURB_CHARS:
+            break
+    if len(blurb) <= PROJECT_BLURB_CHARS:
+        return blurb
+    return blurb[:PROJECT_BLURB_CHARS].rsplit(" ", 1)[0].rstrip(",;:—-") + "..."
+
+
+def resolve_projects(resume: Resume, tailored) -> list[tuple[dict, list[str]]]:
+    """The (project, bullets) pairs to render.
+
+    Prefers bullets the model rewrote for this posting. Falls back to the
+    master's own text when the model didn't tailor projects — selection
+    only, verbatim, which cannot introduce a claim. Either way the bullet
+    count is capped: an untailored master must not be able to spend a page
+    on one project.
+    """
+    tailored_projects = list(getattr(tailored, "projects", None) or [])
+    if tailored_projects:
+        out = []
+        for item in tailored_projects:
+            index = item.project_index
+            if not 0 <= index < len(resume.projects):
+                continue  # reported by verify
+            bullets = [b.text for b in item.bullets][:PROJECT_BULLET_LIMIT]
+            if bullets:
+                out.append((resume.projects[index], bullets))
+        if out:
+            return out
+
+    projects = resume.projects
+    wanted = list(getattr(tailored, "selected_projects", None) or [])
+    if wanted:
+        # An out-of-range index is dropped here and reported by `verify`;
+        # selecting none falls back to all, since an empty Projects section
+        # is worse than a long one.
+        picked = [resume.projects[i] for i in wanted if 0 <= i < len(resume.projects)]
+        projects = picked or resume.projects
+
+    return [
+        (p, list(p.get("highlights") or [])[:PROJECT_BULLET_LIMIT])
+        for p in projects
+    ]
+
+
 def render_markdown(resume: Resume, tailored, language: str = "en") -> str:
     """Render a tailored resume to Markdown.
 
@@ -234,23 +302,15 @@ def render_markdown(resume: Resume, tailored, language: str = "en") -> str:
     # That is deliberate: it is the reason these sections need no verification
     # pass — there is no route by which a project or a thesis could acquire a
     # claim you did not write yourself.
-    projects = resume.projects
-    wanted = list(getattr(tailored, "selected_projects", None) or [])
-    if wanted:
-        # Selection only — the text stays verbatim, so choosing which projects
-        # to show cannot introduce a claim. An out-of-range index is dropped
-        # here and reported by `verify`; selecting none of them falls back to
-        # all, since an empty Projects section is worse than a long one.
-        picked = [resume.projects[i] for i in wanted if 0 <= i < len(resume.projects)]
-        projects = picked or resume.projects
-
-    if projects:
+    entries = resolve_projects(resume, tailored)
+    if entries:
         lines += ["", "## " + h["projects"]]
-        for project in projects:
+        for project, bullets in entries:
             lines += ["", f"### {project.get('name', '')}"]
-            if project.get("description"):
-                lines += [f"*{project['description']}*", ""]
-            lines += [f"- {item}" for item in project.get("highlights") or []]
+            blurb = project_blurb(project.get("description", ""))
+            if blurb:
+                lines += [f"*{blurb}*", ""]
+            lines += [f"- {item}" for item in bullets]
 
     if tailored.selected_skills:
         lines += ["", "## " + h["skills"], "", ", ".join(tailored.selected_skills)]
@@ -823,27 +883,23 @@ def render_latex(
             lines += [r"      \resumeItemListEnd \vspace{6pt}", ""]
         lines += [r"  \resumeSubHeadingListEnd", r"\vspace{-14pt}", "", r"\hfill", ""]
 
-    projects = resume.projects
-    wanted = list(getattr(tailored, "selected_projects", None) or [])
-    if wanted:
-        picked = [resume.projects[i] for i in wanted if 0 <= i < len(resume.projects)]
-        projects = picked or resume.projects
-
-    if projects:
+    entries = resolve_projects(resume, tailored)
+    if entries:
         lines += [
             f"\\section{{{latex_escape(h['projects'])}}}",
             r"    \vspace{-5pt}",
             r"    \resumeSubHeadingListStart",
         ]
-        for project in projects:
+        for project, bullets in entries:
             name = latex_escape(project.get("name", ""))
             url = (project.get("url") or "").strip()
             title = (
                 f"\\href{{{latex_escape(url)}}}{{\\textbf{{{name}}}}}"
                 if url else f"\\textbf{{{name}}}"
             )
-            if project.get("description"):
-                title += f" $|$ \\emph{{{latex_escape(project['description'])}}}"
+            blurb = project_blurb(project.get("description", ""))
+            if blurb:
+                title += f" $|$ \\emph{{{latex_escape(blurb)}}}"
             lines += [
                 r"      \resumeProjectHeading",
                 f"          {{{title}}}{{}}",
@@ -851,7 +907,7 @@ def render_latex(
             ]
             lines += [
                 f"            \\resumeItem{{{latex_escape(item)}}}"
-                for item in project.get("highlights") or []
+                for item in bullets
             ]
             lines += [r"          \resumeItemListEnd", r"          \vspace{-6pt}"]
         lines += [r"    \resumeSubHeadingListEnd", r"\vspace{-5pt}", "", r"\hfill", ""]

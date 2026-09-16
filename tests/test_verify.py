@@ -235,3 +235,74 @@ def test_numbers_are_still_checked_in_german():
         "bullet",
     )
     assert findings
+
+
+# --- project bullets are rewritten now, so they get checked too ----------
+
+class _PB:
+    def __init__(self, i, text):
+        self.source_index, self.text = i, text
+
+
+class _TP:
+    def __init__(self, index, bullets):
+        self.project_index, self.bullets = index, bullets
+
+
+class _ResumeWithProject:
+    roles = []
+    projects = [{
+        "name": "Stereo Depth",
+        "highlights": [
+            "Fine-tuned RAFT-Stereo in PyTorch to 3.74% D1 on Middlebury 2014.",
+        ],
+    }]
+
+    def full_text(self):
+        return "Stereo Depth RAFT-Stereo PyTorch 3.74 D1 Middlebury 2014"
+
+
+class _TProjects:
+    summary = ""
+    selected_skills = []
+    cover_letter = ""
+    roles = []
+    selected_projects = []
+
+    def __init__(self, projects):
+        self.projects = projects
+
+
+def test_honest_project_bullet_passes():
+    t = _TProjects([_TP(0, [_PB(0, "Fine-tuned RAFT-Stereo to 3.74% D1.")])])
+    assert check_tailoring(_ResumeWithProject(), t) == []
+
+
+def test_project_bullet_may_drop_a_number():
+    # Cutting a metric is the point of shortening; only adding one is a lie.
+    t = _TProjects([_TP(0, [_PB(0, "Fine-tuned RAFT-Stereo in PyTorch.")])])
+    assert check_tailoring(_ResumeWithProject(), t) == []
+
+
+def test_project_bullet_inflating_a_number_is_caught():
+    t = _TProjects([_TP(0, [_PB(0, "Fine-tuned RAFT-Stereo to 0.74% D1.")])])
+    findings = check_tailoring(_ResumeWithProject(), t)
+    assert any(f.kind == "number" for f in findings)
+
+
+def test_project_bullet_inventing_a_technology_is_caught():
+    t = _TProjects([_TP(0, [_PB(0, "Fine-tuned RAFT-Stereo on TensorFlow.")])])
+    findings = check_tailoring(_ResumeWithProject(), t)
+    assert any("TensorFlow" in f.detail for f in findings)
+
+
+def test_project_bullet_with_a_bad_source_index_is_caught():
+    t = _TProjects([_TP(0, [_PB(7, "Something.")])])
+    findings = check_tailoring(_ResumeWithProject(), t)
+    assert any(f.kind == "index" and "bullet 7" in f.where for f in findings)
+
+
+def test_unknown_project_index_is_caught():
+    t = _TProjects([_TP(9, [_PB(0, "Something.")])])
+    findings = check_tailoring(_ResumeWithProject(), t)
+    assert any(f.kind == "index" and "project 9" in f.where for f in findings)

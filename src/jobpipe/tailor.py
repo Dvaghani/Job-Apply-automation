@@ -46,23 +46,33 @@ Within that rule, tailor hard:
 focused resume beats a complete one. Prefer 3-5 bullets on recent, relevant \
 roles and 1-2 on older ones.
 - Rephrase each selected bullet toward the posting's own vocabulary, so the \
-same true fact is stated in the words this employer uses. Keep every number \
-exactly as the master states it.
+same true fact is stated in the words this employer uses.
+- **Keep every bullet to one or two lines — about 200 characters, never more \
+than 250.** The master is a superset written to hold everything; a resume \
+bullet is the short version. A bullet that runs four lines does not get read.
+- **At most one or two numbers per bullet, and only the ones that land.** A \
+master bullet may carry six measurements — tolerances, error rates, \
+intermediate benchmarks. Keep the figure that proves the result and cut the \
+rest; a wall of decimals reads as a lab report and a recruiter's eye slides \
+straight off it. Any number you do keep must appear in the master exactly as \
+the master states it — you may drop a number, never change one.
 - Lead each bullet with the outcome, not the activity.
 - Order skills by relevance to the posting; include only skills the master \
 already lists.
 - Write a summary of 2-3 lines aimed squarely at this role.
-- In `selected_projects`, give the indices of the projects worth the space \
-for THIS posting and leave the rest out. Drop one whose substance already \
-appears in a role bullet: repeating it costs a third of a page and tells the \
-reader nothing new.
-- Aim for two pages. Education, projects and languages are printed in full \
-from the master and you cannot shorten them, so the length you control is the \
-number of bullets — cut harder rather than keep a weak one.
+- In `projects`, give the projects worth the space for THIS posting, each \
+with at most 3 bullets, rewritten to the same length rule as the rest. Drop a \
+project whose substance already appears in a role bullet: repeating it costs \
+a third of a page and tells the reader nothing new. Drop the housekeeping a \
+master collects — registered titles, department names, submission dates — \
+none of it is read.
+- Aim for two pages. Education and languages are printed in full from the \
+master, so the length you control is the bullets: cut harder rather than keep \
+a weak one.
 
 For `source_index`, give the index of the master bullet each rewrite came \
-from, counting from 0 within that role. This is checked, so it must be \
-accurate.
+from, counting from 0 within that role or project. This is checked, so it \
+must be accurate.
 
 The cover letter, if asked for, is at most 200 words: why this company, what \
 you would do in the role, grounded only in facts from the master resume. No \
@@ -102,16 +112,36 @@ class TailoredRole(BaseModel):
     bullets: list[TailoredBullet]
 
 
+class TailoredProject(BaseModel):
+    project_index: int = Field(
+        description="0-based index of the project in the master resume"
+    )
+    bullets: list[TailoredBullet] = Field(
+        description="At most 3 rewritten bullets, each citing its source_index"
+    )
+
+
 class Tailoring(BaseModel):
     summary: str = Field(description="2-3 line summary aimed at this posting")
     roles: list[TailoredRole]
     selected_skills: list[str] = Field(description="Relevant skills, most relevant first")
     cover_letter: str = Field(default="", description="Cover letter, or empty if not requested")
+    projects: list[TailoredProject] = Field(
+        default_factory=list,
+        description=(
+            "The projects worth the space for this posting, most relevant "
+            "first, each with at most 3 rewritten bullets. Leave empty only "
+            "if no project is worth including."
+        ),
+    )
+    # Superseded by `projects`, which also shortens. Kept because a model
+    # may still answer with it, and selection alone beats printing the
+    # master's every project in full.
     selected_projects: list[int] = Field(
         default_factory=list,
         description=(
-            "0-based indices of the master's projects worth including for this "
-            "posting, most relevant first. Empty means include them all."
+            "Deprecated — prefer `projects`. 0-based indices of projects to "
+            "include verbatim."
         ),
     )
     keywords_matched: list[str] = Field(
@@ -139,11 +169,16 @@ def _resume_for_prompt(resume: Resume) -> str:
             lines.append(f"  {group.get('name', '')}: {keywords}")
     if resume.projects:
         # Indexed, because the model can only cite an index it was shown.
-        lines.append("\nPROJECTS (selected_projects index):")
+        # Highlights are listed too: projects are rewritten like roles now,
+        # so each bullet needs a source_index to cite within its project.
+        lines.append("\nPROJECTS (project_index / bullet source_index):")
         for i, project in enumerate(resume.projects):
             lines.append(
-                f"  [{i}] {project.get('name', '')}: {project.get('description', '')}"
+                f"\n[project {i}] {project.get('name', '')}"
+                f" — {project.get('description', '')}"
             )
+            for j, highlight in enumerate(project.get("highlights") or []):
+                lines.append(f"    [{j}] {highlight}")
     if resume.education:
         lines.append("\nEDUCATION:")
         for edu in resume.education:

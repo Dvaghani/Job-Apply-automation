@@ -470,3 +470,111 @@ def test_profile_link_display_text_drops_scheme_and_trailing_slash(master):
     assert _display_url("https://github.com/ada") == "github.com/ada"
     assert _display_url("https://www.linkedin.com/in/ada/") == "www.linkedin.com/in/ada"
     assert _display_url("http://example.dev") == "example.dev"
+
+
+# --- projects: length, not just selection --------------------------------
+#
+# A master is a superset by design. Projects used to print in full — every
+# highlight, and the whole `description` inside a one-line heading — so a
+# thesis entry with eight bullets of measurements spent a page on its own.
+
+from jobpipe.resume import (  # noqa: E402
+    PROJECT_BULLET_LIMIT, project_blurb, resolve_projects,
+)
+
+THESIS_DESC = (
+    "M.Sc. thesis, Technische Universität Chemnitz — Professorship of Computer "
+    "Engineering. Registered title: Depth Map Generation based on Application "
+    "Specific Stereo-Vision. In thesis phase; submission expected 2026."
+)
+
+
+def test_blurb_keeps_a_short_description_whole():
+    assert project_blurb("IAV GmbH, 2024–2025. Team project.") == "IAV GmbH, 2024–2025."
+    assert project_blurb("B.E. Final Year Project, 2020.") == "B.E. Final Year Project, 2020."
+
+
+def test_blurb_is_not_fooled_by_an_abbreviation():
+    # "M.Sc." ends in a period; taking the first sentence alone left a stub.
+    assert project_blurb(THESIS_DESC).startswith("M.Sc. thesis, Technische")
+
+
+def test_blurb_fits_on_one_heading_line():
+    out = project_blurb(THESIS_DESC)
+    assert len(out) <= 90
+    # The registered-title/submission-date housekeeping is gone.
+    assert "Registered title" not in out and "2026" not in out
+
+
+def test_blurb_of_nothing_is_nothing():
+    assert project_blurb("") == ""
+    assert project_blurb(None) == ""
+
+
+class _PB:
+    def __init__(self, i, text):
+        self.source_index, self.text = i, text
+
+
+class _TP:
+    def __init__(self, index, bullets):
+        self.project_index, self.bullets = index, bullets
+
+
+class _TWithProjects:
+    summary = "x"
+    cover_letter = ""
+    selected_skills = []
+    selected_projects = []
+    roles = []
+
+    def __init__(self, projects):
+        self.projects = projects
+
+
+def _master_with_projects(tmp_path, highlights):
+    data = json.loads(json.dumps(MASTER))
+    data["projects"] = [{
+        "name": "Stereo Depth", "description": THESIS_DESC, "highlights": highlights,
+    }]
+    path = tmp_path / "r.json"
+    path.write_text(json.dumps(data))
+    return load(path)
+
+
+def test_untailored_projects_are_capped(tmp_path):
+    master = _master_with_projects(tmp_path, [f"Highlight {i}." for i in range(8)])
+    tailoring = T([R(0, [B(0, "Built a ledger.")])])
+    (_, bullets), = resolve_projects(master, tailoring)
+    assert len(bullets) == PROJECT_BULLET_LIMIT
+
+
+def test_tailored_project_bullets_replace_the_masters(tmp_path):
+    master = _master_with_projects(tmp_path, ["A very long original bullet.", "Second."])
+    tailoring = _TWithProjects([_TP(0, [_PB(0, "Short rewrite.")])])
+    (project, bullets) = resolve_projects(master, tailoring)[0]
+    assert bullets == ["Short rewrite."]
+    assert project["name"] == "Stereo Depth"
+
+
+def test_tailored_project_bullets_are_capped_too(tmp_path):
+    master = _master_with_projects(tmp_path, [f"H{i}." for i in range(6)])
+    tailoring = _TWithProjects(
+        [_TP(0, [_PB(i, f"Rewrite {i}.") for i in range(6)])]
+    )
+    (_, bullets), = resolve_projects(master, tailoring)
+    assert len(bullets) == PROJECT_BULLET_LIMIT
+
+
+def test_out_of_range_project_falls_back_rather_than_emptying(tmp_path):
+    master = _master_with_projects(tmp_path, ["Only one."])
+    tailoring = _TWithProjects([_TP(99, [_PB(0, "Rewrite.")])])
+    # Nothing selectable, so the master's own text still renders.
+    assert resolve_projects(master, tailoring) == [(master.projects[0], ["Only one."])]
+
+
+def test_rendered_project_heading_is_one_line(tmp_path):
+    master = _master_with_projects(tmp_path, ["Did the thing."])
+    out = tex(master)
+    assert "Registered title" not in out
+    assert r"\emph{M.Sc. thesis, Technische Universität Chemnitz" in out
